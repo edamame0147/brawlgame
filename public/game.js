@@ -48,7 +48,7 @@ function create() {
             let x = offsetX + c * TILE_SIZE + TILE_SIZE/2;
             let y = offsetY + r * TILE_SIZE + TILE_SIZE/2;
             if (MAP_DESIGN[r][c] === 1) {
-                walls.create(x, y, null).setSize(TILE_SIZE-4, TILE_SIZE-4).setVisible(false);
+                let w = walls.create(x, y, null).setSize(TILE_SIZE-4, TILE_SIZE-4).setVisible(false);
                 this.add.rectangle(x, y, TILE_SIZE-4, TILE_SIZE-4, 0x95a5a6);
             }
             if (MAP_DESIGN[r][c] === 2) {
@@ -62,6 +62,7 @@ function create() {
     respawnText = this.add.text(400, 300, '', { fontSize: '48px', fill: '#fff', fontStyle: 'bold' }).setOrigin(0.5).setDepth(200).setScrollFactor(0);
     setupVirtualJoysticks(this);
 
+    // ソケット通信設定
     socket.on('currentPlayers', ps => {
         Object.keys(ps).forEach(id => {
             if (id === socket.id && !player) {
@@ -86,8 +87,6 @@ function create() {
         let t = (info.id === socket.id) ? player : otherPlayers[info.id];
         if (t) { t.hp = 100; t.setPosition(info.x, info.y); t.setVisible(true); if(info.id === socket.id) { respawnText.setText(''); ammo = 3; ultGage = 0; isStunned = false; isActionLocked = false; }}
     });
-    
-    // タブを閉じたプレイヤーを即座に消す処理
     socket.on('playerDisconnected', id => {
         if(otherPlayers[id]) {
             if(otherPlayers[id].ui) otherPlayers[id].ui.destroy();
@@ -96,7 +95,6 @@ function create() {
             delete otherPlayers[id];
         }
     });
-
     socket.on('showPin', data => { let t = (data.id === socket.id) ? player : otherPlayers[data.id]; if(t && t.active) displayPin(this, t, data.emoji); });
 }
 
@@ -164,7 +162,6 @@ function createBullet(s, x, y, angle, charType, isMine, shooterId, isUlt, power 
             let zone = s.add.circle(tx, ty, 100, 0x2ecc71, 0.3).setDepth(1);
             s.physics.add.existing(zone);
             s.time.addEvent({ delay: 500, repeat: 10, callback: () => {
-                // 自分以外のスパイクのウルトに当たった場合
                 if(player && shooterId !== socket.id && s.physics.overlap(player, zone)) {
                     socket.emit('updateHP', { id: socket.id, hp: Math.max(0, player.hp - 5), attackerId: shooterId });
                     currentSpeedMultiplier = 0.5; // スロウ効果
@@ -177,10 +174,9 @@ function createBullet(s, x, y, angle, charType, isMine, shooterId, isUlt, power 
                 s.tweens.add({ targets: player, x: tx, y: ty, duration: 600, ease: 'Power2', 
                     onComplete: () => {
                         isActionLocked = false;
-                        // ノックバック処理: 着地地点の周囲の敵を弾き飛ばす
+                        // ノックバック処理
                         Object.values(otherPlayers).forEach(op => {
-                            let dist = Phaser.Math.Distance.Between(player.x, player.y, op.x, op.y);
-                            if(dist < 130) {
+                            if(Phaser.Math.Distance.Between(player.x, player.y, op.x, op.y) < 130) {
                                 let knockAngle = Phaser.Math.Angle.Between(player.x, player.y, op.x, op.y);
                                 s.tweens.add({ targets: op, x: op.x + Math.cos(knockAngle)*70, y: op.y + Math.sin(knockAngle)*70, duration: 200, ease: 'Cubic.out' });
                             }
@@ -189,23 +185,33 @@ function createBullet(s, x, y, angle, charType, isMine, shooterId, isUlt, power 
                 });
             }
         } else if (charType === 'shelly') {
-            for(let i=-4; i<=4; i++) bConfig(s, x, y, angle + i*0.15, 600, 400, 7, 0xffff00, group, shooterId, true);
+            for(let i=-4; i<=4; i++) buildBullet(s, x, y, angle + i*0.15, 600, 400, 7, 0xffff00, group, shooterId, true);
         } else if (charType === 'frank') {
-            let b = bConfig(s, x, y, angle, 400, 400, 80, 0xffff00, group, shooterId, true, true);
+            buildBullet(s, x, y, angle, 400, 400, 80, 0xffff00, group, shooterId, true, true);
         }
     } else {
-        if (charType === 'frank') { for(let i=-2; i<=2; i++) bConfig(s, x, y, angle+i*0.2, 400, 350, 25, 0x795548, group, shooterId, false, false, true); }
-        else if (charType === 'shelly') { for(let i=-1; i<=1; i++) bConfig(s, x, y, angle+i*0.2, 450, 450, 5, 0xf1c40f, group, shooterId, false); }
-        else if (charType === 'spike') { bConfig(s, x, y, angle, 280, 700, 10, 0x2ecc71, group, shooterId, false); }
-        else if (charType === 'edgar') { bConfig(s, x + Math.cos(angle)*35, y + Math.sin(angle)*35, angle, 0, 120, 45, 0xffffff, group, shooterId, false, false, true); }
+        if (charType === 'frank') { for(let i=-2; i<=2; i++) buildBullet(s, x, y, angle+i*0.2, 400, 350, 25, 0x795548, group, shooterId, false, false, true); }
+        else if (charType === 'shelly') { for(let i=-1; i<=1; i++) buildBullet(s, x, y, angle+i*0.2, 450, 450, 5, 0xf1c40f, group, shooterId, false); }
+        else if (charType === 'spike') { buildBullet(s, x, y, angle, 280, 700, 10, 0x2ecc71, group, shooterId, false); }
+        else if (charType === 'edgar') { buildBullet(s, x + Math.cos(angle)*35, y + Math.sin(angle)*35, angle, 0, 120, 45, 0xffffff, group, shooterId, false, false, true); }
     }
 }
 
-function bConfig(s, sx, sy, ang, spd, life, size, col, group, shooterId, isUlt, isFrankUlt=false, isRect=false) {
+// 弾の生成と衝突設定を関数化
+function buildBullet(s, sx, sy, ang, spd, life, size, col, group, shooterId, isUlt, isFrankUlt=false, isRect=false) {
     let b = isRect ? s.add.rectangle(sx, sy, size, size, col) : s.add.circle(sx, sy, size, col);
-    group.add(b); s.physics.add.existing(b);
+    group.add(b); 
+    s.physics.add.existing(b);
     s.physics.velocityFromRotation(ang, spd, b.body.velocity);
-    b.shooterId = shooterId; b.isUlt = isUlt; b.isFrankUlt = isFrankUlt;
+    
+    b.shooterId = shooterId; 
+    b.isUlt = isUlt; 
+    b.isFrankUlt = isFrankUlt;
+    b.charType = player ? player.charType : 'shelly';
+
+    // 壁との衝突（弾が消える）
+    s.physics.add.collider(b, walls, () => { if(b.active) b.destroy(); });
+    // 寿命で消える
     s.time.delayedCall(life, () => { if(b.active) b.destroy(); });
     return b;
 }
@@ -216,11 +222,9 @@ function setupVirtualJoysticks(scene) {
     shootJoy = scene.add.circle(670, 470, 65, 0x000000, 0.3).setDepth(150).setScrollFactor(0);
     shootThumb = scene.add.circle(670, 470, 35, 0xff0000, 0.5).setDepth(151).setScrollFactor(0);
     
-    // ウルトボタンとマスク
     ultBtn = scene.add.circle(550, 500, 42, 0x333333, 0.8).setDepth(150).setScrollFactor(0).setInteractive();
     ultGageGraphics = scene.add.graphics().setDepth(151).setScrollFactor(0);
     
-    // 円形マスクの作成
     let maskShape = scene.make.graphics();
     maskShape.fillStyle(0xffffff);
     maskShape.fillCircle(550, 500, 42);
@@ -290,10 +294,12 @@ function addPlayer(s, info) {
     player.charType = info.charType; player.hp = 100; player.ui = s.add.graphics().setDepth(10);
     player.nameTag = s.add.text(info.x, info.y - 55, info.userName, { fontSize: '14px', fill: '#ffffff', fontStyle: 'bold' }).setOrigin(0.5).setDepth(10);
     s.physics.add.collider(player, walls);
+    
+    // 敵の弾に当たった時
     s.physics.add.overlap(player, enemyBullets, (p, b) => {
         if(p.visible && p.hp > 0 && b.active) {
             let d = b.isUlt ? 30 : 15;
-            b.destroy();
+            b.destroy(); // 弾を消す
             socket.emit('updateHP', { id: socket.id, hp: Math.max(0, p.hp - d), attackerId: b.shooterId, stun: b.isFrankUlt });
         }
     });
@@ -305,10 +311,13 @@ function addOtherPlayers(s, info) {
     s.physics.add.existing(op); op.id = info.id; op.hp = 100; op.ui = s.add.graphics().setDepth(10);
     op.nameTag = s.add.text(info.x, info.y - 55, info.userName, { fontSize: '14px', fill: '#ffffff' }).setOrigin(0.5).setDepth(10);
     otherPlayers[info.id] = op;
+    
+    // 自分の弾が他のプレイヤーに当たった時にウルトゲージを増やす
     s.physics.add.overlap(bullets, op, (target, b) => {
         if (target.visible && b.active && b.shooterId === socket.id) {
+            // ここでウルトゲージを更新
             ultGage = Math.min(100, ultGage + 15);
-            b.destroy();
+            b.destroy(); // 弾を消す（すり抜け防止と1回ヒット用）
         }
     });
 }
