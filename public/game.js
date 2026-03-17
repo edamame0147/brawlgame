@@ -25,6 +25,7 @@ let otherPlayers = {};
 let ammo = 3, isReloading = false, ultGage = 0, isStunned = false, isActionLocked = false, respawnText;
 let moveJoy, shootJoy, moveThumb, shootThumb, ultBtn, ultGageGraphics, ultGageMask;
 let isMoving = false, isAiming = false, isUltAiming = false, moveData = { x: 0, y: 0 }, shootData = { angle: 0, dist: 0, power: 0 };
+let lastMoveAngle = 0; // オートエイム用：移動方向を保持
 
 function preload() {}
 
@@ -44,8 +45,7 @@ function create() {
     const offsetY = (MAP_SIZE - (MAP_DESIGN.length * TILE_SIZE)) / 2;
     for (let r = 0; r < MAP_DESIGN.length; r++) {
         for (let c = 0; c < MAP_DESIGN[r].length; c++) {
-            let x = offsetX + c * TILE_SIZE + TILE_SIZE/2;
-            let y = offsetY + r * TILE_SIZE + TILE_SIZE/2;
+            let x = offsetX + c * TILE_SIZE + TILE_SIZE/2, y = offsetY + r * TILE_SIZE + TILE_SIZE/2;
             if (MAP_DESIGN[r][c] === 1) {
                 walls.create(x, y, null).setSize(TILE_SIZE-4, TILE_SIZE-4).setVisible(false);
                 this.add.rectangle(x, y, TILE_SIZE-4, TILE_SIZE-4, 0x95a5a6);
@@ -70,37 +70,24 @@ function create() {
         });
     });
 
-    socket.on('enemyShoot', data => { if(otherPlayers[data.id]) otherPlayers[data.id].lastActionTime = Date.now(); createBullet(this, data.x, data.y, data.angle, data.charType, false, data.id, false); });
-    socket.on('enemyUlt', data => { if(otherPlayers[data.id]) otherPlayers[data.id].lastActionTime = Date.now(); createBullet(this, data.x, data.y, data.angle, data.charType, false, data.id, true, data.power); });
+    socket.on('enemyShoot', d => { if(otherPlayers[d.id]) otherPlayers[d.id].lastActionTime = Date.now(); createBullet(this, d.x, d.y, d.angle, d.charType, false, d.id, false); });
+    socket.on('enemyUlt', d => { if(otherPlayers[d.id]) otherPlayers[d.id].lastActionTime = Date.now(); createBullet(this, d.x, d.y, d.angle, d.charType, false, d.id, true, d.power); });
     socket.on('playerMoved', info => { if(otherPlayers[info.id]) { otherPlayers[info.id].setPosition(info.x, info.y); otherPlayers[info.id].isInBush = info.isInBush; otherPlayers[info.id].bushId = info.bushId; }});
-    socket.on('hpUpdate', data => {
-        let t = (data.id === socket.id) ? player : otherPlayers[data.id];
+    socket.on('hpUpdate', d => {
+        let t = (d.id === socket.id) ? player : otherPlayers[d.id];
         if (t) { 
-            t.hp = data.hp; t.lastActionTime = Date.now(); 
-            if (data.hp <= 0 && t.visible) { t.setVisible(false); if (data.id === socket.id) startRespawnSequence(this); }
-            if (data.stun) { t.isStunned = true; t.setTint(0xffff00); this.time.delayedCall(1500, () => { t.isStunned = false; t.clearTint(); }); }
+            t.hp = d.hp; t.lastActionTime = Date.now(); 
+            if (d.hp <= 0 && t.visible) { t.setVisible(false); if (d.id === socket.id) startRespawnSequence(this); }
+            if (d.stun) { t.isStunned = true; t.setTint(0xffff00); this.time.delayedCall(1500, () => { t.isStunned = false; t.clearTint(); }); }
         }
     });
     socket.on('playerRespawned', info => {
         let t = (info.id === socket.id) ? player : otherPlayers[info.id];
         if (t) { t.hp = 100; t.setPosition(info.x, info.y); t.setVisible(true); if(info.id === socket.id) { respawnText.setText(''); ammo = 3; ultGage = 0; isStunned = false; isActionLocked = false; }}
     });
-    
-    socket.on('playerDisconnected', id => {
-        if(otherPlayers[id]) {
-            if(otherPlayers[id].ui) otherPlayers[id].ui.destroy();
-            if(otherPlayers[id].nameTag) otherPlayers[id].nameTag.destroy();
-            if(otherPlayers[id].pinGroup) otherPlayers[id].pinGroup.destroy();
-            otherPlayers[id].destroy();
-            delete otherPlayers[id];
-        }
-    });
-
-    socket.on('updateRanking', ps => {
-        const list = document.getElementById('rankingList');
-        if(list) list.innerHTML = Object.values(ps).sort((a, b) => b.kills - a.kills).map(p => `<div>${p.userName}: ${p.kills}</div>`).join('');
-    });
-    socket.on('showPin', data => { let t = (data.id === socket.id) ? player : otherPlayers[data.id]; if(t && t.active) displayPin(this, t, data.emoji); });
+    socket.on('playerDisconnected', id => { if(otherPlayers[id]) { if(otherPlayers[id].ui) otherPlayers[id].ui.destroy(); if(otherPlayers[id].nameTag) otherPlayers[id].nameTag.destroy(); otherPlayers[id].destroy(); delete otherPlayers[id]; }});
+    socket.on('updateRanking', ps => { const l = document.getElementById('rankingList'); if(l) l.innerHTML = Object.values(ps).sort((a,b)=>b.kills-a.kills).map(p=>`<div>${p.userName}: ${p.kills}</div>`).join(''); });
+    socket.on('showPin', d => { let t = (d.id===socket.id)?player:otherPlayers[d.id]; if(t&&t.active) displayPin(this, t, d.emoji); });
 }
 
 function update() {
@@ -109,10 +96,12 @@ function update() {
         player.body.setVelocity(0);
         if (!isStunned && !isActionLocked) {
             let speed = { shelly: 220, spike: 220, edgar: 270, frank: 160 }[player.charType] || 220;
-            if (isMoving) player.body.setVelocity(moveData.x * speed, moveData.y * speed);
+            if (isMoving) {
+                player.body.setVelocity(moveData.x * speed, moveData.y * speed);
+                lastMoveAngle = Math.atan2(moveData.y, moveData.x);
+            }
         }
         if (isAiming || isUltAiming) drawAimGuide(player.charType, shootData.angle, isUltAiming, shootData.power);
-
         let bId = null;
         this.physics.overlap(player, bushes, (p, b) => bId = b.bushId);
         player.isInBush = !!bId; player.bushId = bId;
@@ -120,13 +109,10 @@ function update() {
         socket.emit('playerMovement', { x: player.x, y: player.y, isInBush: player.isInBush, bushId: bId });
         updateUI(player);
     }
-
     Object.values(otherPlayers).forEach(op => {
         let isVisible = true;
         let timeSinceAction = Date.now() - (op.lastActionTime || 0);
-        if (op.isInBush && timeSinceAction > 1500) {
-            if (!player || !player.isInBush || player.bushId !== op.bushId) isVisible = false;
-        }
+        if (op.isInBush && timeSinceAction > 1500) { if (!player || !player.isInBush || player.bushId !== op.bushId) isVisible = false; }
         op.setVisible(isVisible && op.hp > 0);
         updateUI(op);
     });
@@ -136,37 +122,31 @@ function drawAimGuide(charType, angle, isUlt, power) {
     aimGuide.lineStyle(2, 0xffffff, 0.4); aimGuide.fillStyle(0xffffff, 0.15);
     let maxRange = isUlt ? 280 : { shelly: 200, spike: 200, edgar: 80, frank: 180 }[charType];
     let currentRange = maxRange * power;
-
     if ((charType === 'edgar' || charType === 'spike') && isUlt) {
-        let targetX = player.x + Math.cos(angle) * currentRange;
-        let targetY = player.y + Math.sin(angle) * currentRange;
-        aimGuide.strokeCircle(targetX, targetY, 45);
-        aimGuide.fillCircle(targetX, targetY, 45);
-        aimGuide.lineStyle(1, 0xffffff, 0.2);
-        aimGuide.lineBetween(player.x, player.y, targetX, targetY);
+        let tx = player.x + Math.cos(angle) * currentRange, ty = player.y + Math.sin(angle) * currentRange;
+        aimGuide.strokeCircle(tx, ty, 45); aimGuide.fillCircle(tx, ty, 45);
+        aimGuide.lineStyle(1, 0xffffff, 0.2); aimGuide.lineBetween(player.x, player.y, tx, ty);
     } else if (charType === 'shelly' || charType === 'frank') {
         aimGuide.beginPath(); aimGuide.moveTo(player.x, player.y);
-        aimGuide.arc(player.x, player.y, maxRange, angle - 0.3, angle + 0.3);
+        aimGuide.arc(player.x, player.y, maxRange, angle - 0.35, angle + 0.35);
         aimGuide.closePath(); aimGuide.fillPath(); aimGuide.strokePath();
     } else {
-        let endX = player.x + Math.cos(angle) * maxRange; let endY = player.y + Math.sin(angle) * maxRange;
-        aimGuide.lineBetween(player.x, player.y, endX, endY);
-        if (charType === 'spike' && !isUlt) aimGuide.strokeCircle(endX, endY, 15);
+        let ex = player.x + Math.cos(angle) * maxRange, ey = player.y + Math.sin(angle) * maxRange;
+        aimGuide.lineBetween(player.x, player.y, ex, ey);
+        if (charType === 'spike' && !isUlt) aimGuide.strokeCircle(ex, ey, 15);
     }
 }
 
 function addPlayer(s, info) {
     let colors = { shelly: 0x3498db, spike: 0x2ecc71, edgar: 0x9b59b6, frank: 0x795548 };
     player = s.add.circle(info.x, info.y, 20, colors[info.charType]);
-    s.physics.add.existing(player);
-    player.charType = info.charType; player.hp = 100; player.ui = s.add.graphics().setDepth(10);
+    s.physics.add.existing(player); player.charType = info.charType; player.hp = 100; player.ui = s.add.graphics().setDepth(10);
     player.nameTag = s.add.text(info.x, info.y - 55, info.userName, { fontSize: '14px', fill: '#ffffff', fontStyle: 'bold' }).setOrigin(0.5).setDepth(10);
     s.physics.add.collider(player, walls);
     s.physics.add.overlap(player, enemyBullets, (p, b) => {
         if(p.visible && p.hp > 0 && b.active) {
             let d = b.isUlt ? { shelly: 35, spike: 15, edgar: 15, frank: 40 }[b.charType] : { shelly: 25, spike: 20, edgar: 15, frank: 35 }[b.charType];
-            b.destroy();
-            socket.emit('updateHP', { id: socket.id, hp: Math.max(0, p.hp - d), attackerId: b.shooterId, stun: b.isFrankUlt });
+            b.destroy(); socket.emit('updateHP', { id: socket.id, hp: Math.max(0, p.hp - d), attackerId: b.shooterId, stun: b.isFrankUlt });
         }
     });
 }
@@ -177,7 +157,6 @@ function addOtherPlayers(s, info) {
     s.physics.add.existing(op); op.id = info.id; op.hp = 100; op.ui = s.add.graphics().setDepth(10);
     op.nameTag = s.add.text(info.x, info.y - 55, info.userName, { fontSize: '14px', fill: '#ffffff' }).setOrigin(0.5).setDepth(10);
     otherPlayers[info.id] = op;
-    
     s.physics.add.overlap(bullets, op, (target, b) => {
         if (target.visible && b.active && b.shooterId === socket.id) {
             let gain = b.isUlt ? 0 : { shelly: 12, spike: 20, edgar: 15, frank: 25 }[player.charType];
@@ -188,18 +167,44 @@ function addOtherPlayers(s, info) {
     });
 }
 
+// ---------------------------------------------------------
+// フランケンの扇形アニメーション生成
+// ---------------------------------------------------------
+function createFrankEffect(s, x, y, angle, isUlt) {
+    let effect = s.add.graphics().setDepth(4);
+    let duration = isUlt ? 450 : 350;
+    let maxRange = isUlt ? 280 : 180;
+    let color = isUlt ? 0xffff00 : 0x795548;
+
+    s.tweens.add({
+        targets: { r: 0, alpha: 0.6 },
+        r: maxRange,
+        alpha: 0,
+        duration: duration,
+        onUpdate: (tween, target) => {
+            effect.clear();
+            effect.lineStyle(4, color, target.alpha);
+            effect.fillStyle(color, target.alpha * 0.3);
+            effect.beginPath();
+            effect.moveTo(x, y);
+            effect.arc(x, y, target.r, angle - 0.35, angle + 0.35);
+            effect.closePath();
+            effect.fillPath();
+            effect.strokePath();
+        },
+        onComplete: () => effect.destroy()
+    });
+}
+
 function createBullet(s, x, y, angle, charType, isMine, shooterId, isUlt, power = 1.0) {
+    if (charType === 'frank') createFrankEffect(s, x, y, angle, isUlt);
+
     let group = isMine ? bullets : enemyBullets;
     let bConfig = (sx, sy, ang, spd, life, size, col, isRect) => {
         let b = isRect ? s.add.rectangle(sx, sy, size, size, col) : s.add.circle(sx, sy, size, col);
         group.add(b); s.physics.add.existing(b);
         s.physics.velocityFromRotation(ang, spd, b.body.velocity);
-        
-        s.physics.add.collider(b, walls, () => { 
-            if(charType==='spike' && !b.isSplit) explodeSpike(s, b.x, b.y, group, shooterId); 
-            b.destroy(); 
-        });
-        
+        s.physics.add.collider(b, walls, () => { if(charType==='spike' && !b.isSplit) explodeSpike(s, b.x, b.y, group, shooterId); b.destroy(); });
         s.time.delayedCall(life, () => { if(b.active) { if(charType==='spike' && !b.isSplit) explodeSpike(s, b.x, b.y, group, shooterId); b.destroy(); }});
         b.charType = charType; b.shooterId = shooterId; b.isUlt = isUlt;
         return b;
@@ -212,20 +217,12 @@ function createBullet(s, x, y, angle, charType, isMine, shooterId, isUlt, power 
             let tx = x + Math.cos(angle) * range, ty = y + Math.sin(angle) * range;
             let zone = s.add.circle(tx, ty, 100, 0x2ecc71, 0.3).setDepth(1);
             s.physics.add.existing(zone);
-            s.time.addEvent({ delay: 500, repeat: 10, callback: () => { 
-                if(player && shooterId !== socket.id && s.physics.overlap(player, zone)) {
-                    socket.emit('updateHP', { id: socket.id, hp: Math.max(0, player.hp - 5), attackerId: shooterId });
-                }
-            }});
+            s.time.addEvent({ delay: 500, repeat: 10, callback: () => { if(player && shooterId !== socket.id && s.physics.overlap(player, zone)) socket.emit('updateHP', { id: socket.id, hp: Math.max(0, player.hp - 5), attackerId: shooterId }); }});
             s.time.delayedCall(5000, () => { if(zone.active) zone.destroy(); });
-        } else if (charType === 'edgar') {
-            if(isMine && player) { 
-                isActionLocked = true; 
-                s.tweens.add({ targets: player, x: x + Math.cos(angle) * range, y: y + Math.sin(angle) * range, duration: 600, ease: 'Power2', onComplete: () => isActionLocked = false }); 
-            }
-        } else if (charType === 'frank') { let b = bConfig(x, y, angle, 400, 400, 80, 0xffff00, true); b.isFrankUlt = true; }
+        } else if (charType === 'edgar') { if(isMine && player) { isActionLocked = true; s.tweens.add({ targets: player, x: x + Math.cos(angle) * range, y: y + Math.sin(angle) * range, duration: 600, ease: 'Power2', onComplete: () => isActionLocked = false }); } }
+        else if (charType === 'frank') { let b = bConfig(x, y, angle, 400, 400, 80, 0xffff00, true); b.isFrankUlt = true; b.setVisible(false); }
     } else {
-        if (charType === 'frank') { for(let i=-2; i<=2; i++) bConfig(x, y, angle+i*0.2, 400, 350, 25, 0x795548, true); }
+        if (charType === 'frank') { for(let i=-2; i<=2; i++) { let b = bConfig(x, y, angle+i*0.2, 400, 350, 25, 0x795548, true); b.setVisible(false); } }
         else if (charType === 'shelly') { for(let i=-1; i<=1; i++) bConfig(x, y, angle+i*0.2, 450, 450, 5, 0xf1c40f, false); }
         else if (charType === 'spike') { bConfig(x, y, angle, 280, 700, 10, 0x2ecc71, false); }
         else if (charType === 'edgar') { bConfig(x + Math.cos(angle)*35, y + Math.sin(angle)*35, angle, 0, 120, 45, 0xffffff, true); }
@@ -234,8 +231,7 @@ function createBullet(s, x, y, angle, charType, isMine, shooterId, isUlt, power 
 
 function explodeSpike(s, x, y, group, shooterId) {
     for(let i=0; i<6; i++) {
-        let b = s.add.circle(x, y, 6, 0x2ecc71); b.isSplit = true;
-        group.add(b); s.physics.add.existing(b);
+        let b = s.add.circle(x, y, 6, 0x2ecc71); b.isSplit = true; group.add(b); s.physics.add.existing(b);
         s.physics.velocityFromRotation((Math.PI*2/6)*i, 300, b.body.velocity);
         s.physics.add.collider(b, walls, () => { if(b.active) b.destroy(); });
         s.time.delayedCall(300, () => { if(b.active) b.destroy(); });
@@ -243,89 +239,96 @@ function explodeSpike(s, x, y, group, shooterId) {
     }
 }
 
+// ---------------------------------------------------------
+// オートエイム用：ターゲット取得
+// ---------------------------------------------------------
+function getAutoAimAngle(charType, isUlt) {
+    let maxRange = isUlt ? 350 : { shelly: 250, spike: 300, edgar: 150, frank: 220 }[charType];
+    let nearestEnemy = null;
+    let minDist = Infinity;
+
+    Object.values(otherPlayers).forEach(op => {
+        if (!op.visible || op.hp <= 0) return; // 隠れている・死んでいる敵は無視
+        let d = Phaser.Math.Distance.Between(player.x, player.y, op.x, op.y);
+        if (d < maxRange && d < minDist) {
+            minDist = d; nearestEnemy = op;
+        }
+    });
+
+    if (nearestEnemy) {
+        return Phaser.Math.Angle.Between(player.x, player.y, nearestEnemy.x, nearestEnemy.y);
+    }
+    return lastMoveAngle; // 敵がいない場合は移動方向
+}
+
 function setupVirtualJoysticks(scene) {
     moveJoy = scene.add.circle(130, 470, 65, 0x000000, 0.3).setDepth(150).setScrollFactor(0);
     moveThumb = scene.add.circle(130, 470, 35, 0xcccccc, 0.5).setDepth(151).setScrollFactor(0);
     shootJoy = scene.add.circle(670, 470, 65, 0x000000, 0.3).setDepth(150).setScrollFactor(0);
     shootThumb = scene.add.circle(670, 470, 35, 0xff0000, 0.5).setDepth(151).setScrollFactor(0);
-    
-    // ウルトボタン
     ultBtn = scene.add.circle(550, 500, 42, 0x333333, 0.8).setDepth(150).setScrollFactor(0).setInteractive();
-    
-    // ウルトゲージ用グラフィックス
     ultGageGraphics = scene.add.graphics().setDepth(151).setScrollFactor(0);
-    
-    // マスク用の円形（ここもScrollFactor(0)にするのが肝）
-    let maskShape = scene.make.graphics().setScrollFactor(0);
-    maskShape.fillStyle(0xffffff);
-    maskShape.fillCircle(550, 500, 42); // 画面上の絶対位置
-    ultGageMask = maskShape.createGeometryMask();
-    ultGageGraphics.setMask(ultGageMask);
+    let ms = scene.make.graphics().setScrollFactor(0); ms.fillStyle(0xffffff); ms.fillCircle(550, 500, 42);
+    ultGageGraphics.setMask(ms.createGeometryMask());
 
     scene.input.addPointer(2);
     scene.input.on('pointerdown', p => { 
-        if(Phaser.Math.Distance.Between(p.x, p.y, ultBtn.x, ultBtn.y) < 45 && ultGage >= 100) { 
-            isUltAiming = true; shootThumb.setFillStyle(0xffff00); 
-        } 
+        if(Phaser.Math.Distance.Between(p.x, p.y, ultBtn.x, ultBtn.y) < 45 && ultGage >= 100) { isUltAiming = true; shootData.dist = 0; } 
+        else if(p.x > 400) { isAiming = true; shootData.dist = 0; }
     });
     scene.input.on('pointermove', p => {
         if (!p.isDown) return;
         if (p.x < 400) {
-            let a = Phaser.Math.Angle.Between(moveJoy.x, moveJoy.y, p.x, p.y);
-            let d = Math.min(Phaser.Math.Distance.Between(moveJoy.x, moveJoy.y, p.x, p.y), 65);
+            let a = Phaser.Math.Angle.Between(moveJoy.x, moveJoy.y, p.x, p.y), d = Math.min(Phaser.Math.Distance.Between(moveJoy.x, moveJoy.y, p.x, p.y), 65);
             moveThumb.setPosition(moveJoy.x + Math.cos(a)*d, moveJoy.y + Math.sin(a)*d);
             moveData = { x: Math.cos(a)*(d/65), y: Math.sin(a)*(d/65) }; isMoving = true;
         } else {
-            let a = Phaser.Math.Angle.Between(shootJoy.x, shootJoy.y, p.x, p.y);
-            let d = Math.min(Phaser.Math.Distance.Between(shootJoy.x, shootJoy.y, p.x, p.y), 65);
+            let a = Phaser.Math.Angle.Between(shootJoy.x, shootJoy.y, p.x, p.y), d = Math.min(Phaser.Math.Distance.Between(shootJoy.x, shootJoy.y, p.x, p.y), 65);
             shootThumb.setPosition(shootJoy.x + Math.cos(a)*d, shootJoy.y + Math.sin(a)*d);
-            shootData = { angle: a, dist: d, power: d/65 }; isAiming = true;
+            shootData = { angle: a, dist: d, power: d/65 };
         }
     });
     scene.input.on('pointerup', p => {
         if (p.x < 400) { moveThumb.setPosition(130, 470); isMoving = false; }
         else {
-            if (isUltAiming && shootData.dist > 20) {
-                socket.emit('ult', { id: socket.id, x: player.x, y: player.y, angle: shootData.angle, charType: player.charType, power: shootData.power });
-                createBullet(scene, player.x, player.y, shootData.angle, player.charType, true, socket.id, true, shootData.power);
-                ultGage = 0; isUltAiming = false; shootThumb.setFillStyle(0xff0000);
-            } else if (isAiming && shootData.dist > 20 && ammo > 0) {
+            let finalAngle = shootData.angle;
+            let finalPower = shootData.power;
+            // オートエイム判定（ドラッグ距離が短い場合）
+            if (shootData.dist < 20) {
+                finalAngle = getAutoAimAngle(player.charType, isUltAiming);
+                finalPower = 1.0;
+            }
+
+            if (isUltAiming && ultGage >= 100) {
+                socket.emit('ult', { id: socket.id, x: player.x, y: player.y, angle: finalAngle, charType: player.charType, power: finalPower });
+                createBullet(scene, player.x, player.y, finalAngle, player.charType, true, socket.id, true, finalPower);
+                ultGage = 0;
+            } else if (isAiming && ammo > 0) {
                 if(player.charType === 'frank') { isActionLocked = true; scene.time.delayedCall(400, () => isActionLocked = false); }
-                socket.emit('shoot', { id: socket.id, x: player.x, y: player.y, angle: shootData.angle, charType: player.charType });
-                createBullet(scene, player.x, player.y, shootData.angle, player.charType, true, socket.id, false);
+                socket.emit('shoot', { id: socket.id, x: player.x, y: player.y, angle: finalAngle, charType: player.charType });
+                createBullet(scene, player.x, player.y, finalAngle, player.charType, true, socket.id, false);
                 ammo--; startReload(scene);
             }
-            shootThumb.setPosition(670, 470); isAiming = false; isUltAiming = false; shootThumb.setFillStyle(0xff0000);
+            shootThumb.setPosition(670, 470); isAiming = false; isUltAiming = false; shootData.dist = 0;
         }
     });
 }
 
 function updateUI(t) {
     if (!t || !t.active) return;
-    t.ui.clear(); 
-    if (!t.visible) { t.nameTag.setVisible(false); if(t.pinGroup) t.pinGroup.setVisible(false); return; }
+    t.ui.clear(); if (!t.visible) { t.nameTag.setVisible(false); return; }
     t.nameTag.setVisible(true).setPosition(t.x, t.y - 55);
-    if(t.pinGroup) { t.pinGroup.setVisible(true); t.pinGroup.setPosition(t.x, t.y - 100); }
     t.ui.fillStyle(0x000000, 0.5); t.ui.fillRect(t.x-21, t.y-36, 42, 8);
     t.ui.fillStyle(0xc0392b); t.ui.fillRect(t.x-20, t.y-35, 40, 6);
     t.ui.fillStyle(0x2ecc71); t.ui.fillRect(t.x-20, t.y-35, (t.hp/100)*40, 6);
     if (t === player) {
         for (let i=0; i<3; i++) { t.ui.fillStyle(i < ammo ? 0xf1c40f : 0x555555); t.ui.fillRect(t.x-20+(i*14), t.y-25, 12, 4); }
-        
-        // ウルトゲージ描画（画面座標固定）
-        ultGageGraphics.clear();
-        ultGageGraphics.fillStyle(0x222222, 0.8);
-        ultGageGraphics.fillCircle(ultBtn.x, ultBtn.y, 42);
-        
+        ultGageGraphics.clear(); ultGageGraphics.fillStyle(0x222222, 0.8); ultGageGraphics.fillCircle(ultBtn.x, ultBtn.y, 42);
         if (ultGage > 0) {
             ultGageGraphics.fillStyle(ultGage >= 100 ? 0xf1c40f : 0xe67e22, 1);
-            let rectH = 84 * (ultGage / 100);
-            // マスクされているので、ボタンの位置に合わせて四角を描画するだけでOK
-            ultGageGraphics.fillRect(ultBtn.x - 42, ultBtn.y + 42 - rectH, 84, rectH);
+            let h = 84 * (ultGage / 100); ultGageGraphics.fillRect(ultBtn.x - 42, ultBtn.y + 42 - h, 84, h);
         }
-        
-        ultGageGraphics.lineStyle(4, ultGage >= 100 ? 0xffffff : 0x333333);
-        ultGageGraphics.strokeCircle(ultBtn.x, ultBtn.y, 42);
+        ultGageGraphics.lineStyle(4, ultGage >= 100 ? 0xffffff : 0x333333); ultGageGraphics.strokeCircle(ultBtn.x, ultBtn.y, 42);
     }
 }
 
@@ -334,12 +337,10 @@ function startRespawnSequence(s) {
     let c = 3; if(respawnText) respawnText.setText(`復活まで: ${c}`);
     let i = setInterval(() => { c--; if(c>0) { if(respawnText) respawnText.setText(`復活まで: ${c}`); } else { clearInterval(i); if(respawnText) respawnText.setText(''); socket.emit('respawnRequest'); } }, 1000);
 }
-
 function displayPin(scene, target, emoji) {
     if (!target || !target.active) return;
     if (target.pinGroup) target.pinGroup.destroy();
-    let bg = scene.add.graphics();
-    bg.fillStyle(0xffffff, 1); bg.fillRoundedRect(-25, -25, 50, 50, 10);
+    let bg = scene.add.graphics(); bg.fillStyle(0xffffff, 1); bg.fillRoundedRect(-25, -25, 50, 50, 10);
     bg.lineStyle(2, 0x000000, 1); bg.strokeRoundedRect(-25, -25, 50, 50, 10);
     bg.beginPath(); bg.moveTo(-5, 25); bg.lineTo(0, 35); bg.lineTo(5, 25); bg.closePath(); bg.fillPath(); bg.strokePath();
     let txt = scene.add.text(0, 0, emoji, { fontSize: '32px' }).setOrigin(0.5);
