@@ -1,4 +1,4 @@
-const MAP_SIZE = 2000; // マップの広さ
+const MAP_SIZE = 2500; // 広大なマップ
 
 const config = {
     type: Phaser.AUTO,
@@ -23,11 +23,9 @@ function preload() {}
 
 function create() {
     socket = io();
-    
-    // 物理世界の限界を設定
     this.physics.world.setBounds(0, 0, MAP_SIZE, MAP_SIZE);
 
-    // 地面のグリッド線を描画
+    // 背景のグリッド
     let grid = this.add.graphics();
     grid.lineStyle(2, 0x2c3e50, 0.5);
     for (let i = 0; i <= MAP_SIZE; i += 100) {
@@ -41,28 +39,40 @@ function create() {
     walls = this.physics.add.staticGroup();
     bushes = this.physics.add.staticGroup();
 
-    // マップ配置（外壁と障害物）
-    createWall(this, MAP_SIZE/2, 10, MAP_SIZE, 20); // 上壁
-    createWall(this, MAP_SIZE/2, MAP_SIZE-10, MAP_SIZE, 20); // 下壁
-    createWall(this, 10, MAP_SIZE/2, 20, MAP_SIZE); // 左壁
-    createWall(this, MAP_SIZE-10, MAP_SIZE/2, 20, MAP_SIZE); // 右壁
+    // 外壁
+    createWall(this, MAP_SIZE/2, 10, MAP_SIZE, 20);
+    createWall(this, MAP_SIZE/2, MAP_SIZE-10, MAP_SIZE, 20);
+    createWall(this, 10, MAP_SIZE/2, 20, MAP_SIZE);
+    createWall(this, MAP_SIZE-10, MAP_SIZE/2, 20, MAP_SIZE);
 
-    // ランダムな障害物とブッシュ
-    createWall(this, 800, 1000, 40, 300);
-    createWall(this, 1200, 1000, 40, 300);
-    createBush(this, 1000, 800, 400, 100, "center_bush");
+    // --- ステージ自動生成 ---
+    // 壁をランダムに30個
+    for (let i = 0; i < 30; i++) {
+        let x = Phaser.Math.Between(300, MAP_SIZE - 300);
+        let y = Phaser.Math.Between(300, MAP_SIZE - 300);
+        let w = Phaser.Math.RND.pick([60, 120, 200]);
+        let h = Phaser.Math.RND.pick([60, 120, 200]);
+        createWall(this, x, y, w, h);
+    }
+    // 草むらをランダムに25個
+    for (let i = 0; i < 25; i++) {
+        let x = Phaser.Math.Between(200, MAP_SIZE - 200);
+        let y = Phaser.Math.Between(200, MAP_SIZE - 200);
+        let w = Phaser.Math.Between(150, 400);
+        let h = Phaser.Math.Between(100, 250);
+        createBush(this, x, y, w, h, `bush_${i}`);
+    }
 
-    // UIテキストをカメラに固定
     respawnText = this.add.text(400, 300, '', { fontSize: '48px', fill: '#fff', fontStyle: 'bold' })
         .setOrigin(0.5).setDepth(200).setScrollFactor(0);
 
     setupVirtualJoysticks(this);
 
+    // 通信処理
     socket.on('currentPlayers', (players) => {
         Object.keys(players).forEach((id) => {
             if (id === socket.id && !player) {
                 addPlayer(this, players[id]);
-                // カメラをプレイヤーに追従させる
                 this.cameras.main.startFollow(player, true, 0.1, 0.1);
                 this.cameras.main.setBounds(0, 0, MAP_SIZE, MAP_SIZE);
             }
@@ -107,7 +117,7 @@ function create() {
 function update() {
     if (player && player.visible) {
         player.body.setVelocity(0);
-        if (isMoving) player.body.setVelocity(moveData.x * 220, moveData.y * 220);
+        if (isMoving) player.body.setVelocity(moveData.x * 230, moveData.y * 230);
 
         let bushId = null;
         this.physics.overlap(player, bushes, (p, b) => { bushId = b.bushId; });
@@ -124,11 +134,11 @@ function update() {
 }
 
 function setupVirtualJoysticks(scene) {
-    const r = 60;
-    moveJoy = scene.add.circle(120, 480, r, 0x000000, 0.3).setDepth(150).setScrollFactor(0);
-    moveThumb = scene.add.circle(120, 480, 30, 0xcccccc, 0.5).setDepth(151).setScrollFactor(0);
-    shootJoy = scene.add.circle(680, 480, r, 0x000000, 0.3).setDepth(150).setScrollFactor(0);
-    shootThumb = scene.add.circle(680, 480, 30, 0xff0000, 0.5).setDepth(151).setScrollFactor(0);
+    const r = 65;
+    moveJoy = scene.add.circle(130, 470, r, 0x000000, 0.3).setDepth(150).setScrollFactor(0);
+    moveThumb = scene.add.circle(130, 470, 35, 0xcccccc, 0.5).setDepth(151).setScrollFactor(0);
+    shootJoy = scene.add.circle(670, 470, r, 0x000000, 0.3).setDepth(150).setScrollFactor(0);
+    shootThumb = scene.add.circle(670, 470, 35, 0xff0000, 0.5).setDepth(151).setScrollFactor(0);
 
     scene.input.addPointer(2);
     scene.input.on('pointerdown', (p) => {
@@ -154,13 +164,13 @@ function setupVirtualJoysticks(scene) {
     });
 
     scene.input.on('pointerup', (p) => {
-        if (p.x < 400) { moveThumb.setPosition(120, 480); isMoving = false; }
+        if (p.x < 400) { moveThumb.setPosition(130, 470); isMoving = false; }
         else {
             if (isAiming && shootData.dist > 20 && ammo > 0 && player.visible) {
                 handleAttack(scene, shootData.angle);
                 ammo--; if (!isReloading) startReload(scene);
             }
-            shootThumb.setPosition(680, 480); isAiming = false;
+            shootThumb.setPosition(670, 470); isAiming = false;
         }
     });
 }
@@ -187,7 +197,6 @@ function updateUI(target) {
     }
 }
 
-// 共通パーツ
 function createWall(s, x, y, w, h) {
     let wall = s.add.rectangle(x, y, w, h, 0x95a5a6);
     walls.add(wall); s.physics.add.existing(wall, true);
@@ -256,4 +265,10 @@ function startRespawnSequence(s) {
         else { clearInterval(respawnTimerInterval); respawnTimerInterval = null; respawnText.setText(''); socket.emit('respawnRequest'); }
     }, 1000);
 }
-window.launchGame = (type) => socket.emit('joinGame', { charType: type });
+
+// キャラ選択画面を消す関数
+window.launchGame = (type) => {
+    const overlay = document.getElementById('overlay');
+    if (overlay) overlay.style.display = 'none';
+    socket.emit('joinGame', { charType: type });
+};
