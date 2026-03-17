@@ -16,9 +16,12 @@ io.on('connection', (socket) => {
             id: socket.id,
             charType: data.charType,
             userName: data.userName,
-            hp: 100, isInBush: false, bushId: null
+            hp: 100, 
+            kills: 0, // キル数を追加
+            isInBush: false, bushId: null
         };
         io.emit('currentPlayers', players);
+        io.emit('updateRanking', players);
     });
 
     socket.on('playerMovement', (data) => {
@@ -32,8 +35,15 @@ io.on('connection', (socket) => {
 
     socket.on('updateHP', (data) => {
         if (players[data.id]) {
+            let oldHp = players[data.id].hp;
             players[data.id].hp = data.hp;
             io.emit('hpUpdate', { id: data.id, hp: data.hp, reveal: data.reveal });
+
+            // キル判定
+            if (oldHp > 0 && data.hp <= 0 && data.attackerId && players[data.attackerId]) {
+                players[data.attackerId].kills++;
+                io.emit('updateRanking', players);
+            }
         }
     });
 
@@ -49,6 +59,7 @@ io.on('connection', (socket) => {
     socket.on('disconnect', () => {
         delete players[socket.id];
         io.emit('playerDisconnected', socket.id);
+        io.emit('updateRanking', players); // 抜けたらランキングから消す
     });
 });
 
