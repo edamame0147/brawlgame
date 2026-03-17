@@ -12,7 +12,7 @@ let players = {};
 io.on('connection', (socket) => {
     socket.on('joinGame', (data) => {
         players[socket.id] = {
-            x: 750, y: 750, // マップ中央(1500の半分)
+            x: 600, y: 600,
             id: socket.id,
             charType: data.charType,
             userName: data.userName,
@@ -40,8 +40,8 @@ io.on('connection', (socket) => {
     socket.on('respawnRequest', () => {
         if (players[socket.id]) {
             players[socket.id].hp = 100;
-            players[socket.id].x = Math.floor(Math.random() * 1000) + 250;
-            players[socket.id].y = Math.floor(Math.random() * 1000) + 250;
+            players[socket.id].x = Math.floor(Math.random() * 800) + 200;
+            players[socket.id].y = Math.floor(Math.random() * 800) + 200;
             io.emit('playerRespawned', players[socket.id]);
         }
     });
