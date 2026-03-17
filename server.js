@@ -50,10 +50,12 @@ io.on('connection', (socket) => {
         }
     });
 
-    socket.on('disconnect', () => {
-        delete players[socket.id];
-        io.emit('playerDisconnected', socket.id);
-    });
+　　socket.on('disconnect', () => {
+    console.log('User disconnected:', socket.id);
+    // 全員に「このIDを削除して」と即座に通知
+    io.emit('playerDisconnected', socket.id);
+    delete players[socket.id];
+});
 });
 
 server.listen(3000, () => console.log('Server running on port 3000'));
