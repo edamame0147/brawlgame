@@ -20,11 +20,11 @@ const config = {
 };
 
 const game = new Phaser.Game(config);
-let socket, player, bullets, enemyBullets, walls, bushes;
+let socket, player, bullets, enemyBullets, walls, bushes, aimGuide;
 let otherPlayers = {};
 let ammo = 3, isReloading = false, ultGage = 0, isStunned = false, isActionLocked = false, respawnText;
-let moveJoy, shootJoy, moveThumb, shootThumb, ultBtn, ultGageGraphics, aimGuide;
-let isMoving = false, isAiming = false, isUltAiming = false, moveData = { x: 0, y: 0 }, shootData = { angle: 0, dist: 0 };
+let moveJoy, shootJoy, moveThumb, shootThumb, ultBtn, ultGageGraphics;
+let isMoving = false, isAiming = false, isUltAiming = false, moveData = { x: 0, y: 0 }, shootData = { angle: 0, dist: 0, power: 0 };
 
 function preload() {}
 
@@ -61,7 +61,7 @@ function create() {
     respawnText = this.add.text(400, 300, '', { fontSize: '48px', fill: '#fff', fontStyle: 'bold' }).setOrigin(0.5).setDepth(200).setScrollFactor(0);
     setupVirtualJoysticks(this);
 
-    socket.on('currentPlayers', (ps) => {
+    socket.on('currentPlayers', ps => {
         Object.keys(ps).forEach(id => {
             if (id === socket.id && !player) {
                 addPlayer(this, ps[id]);
@@ -70,17 +70,14 @@ function create() {
         });
     });
 
-    socket.on('enemyShoot', data => createBullet(this, data.x, data.y, data.angle, data.charType, false, data.id, false));
-    socket.on('enemyUlt', data => createBullet(this, data.x, data.y, data.angle, data.charType, false, data.id, true));
+    socket.on('enemyShoot', data => { if(otherPlayers[data.id]) otherPlayers[data.id].lastActionTime = Date.now(); createBullet(this, data.x, data.y, data.angle, data.charType, false, data.id, false); });
+    socket.on('enemyUlt', data => { if(otherPlayers[data.id]) otherPlayers[data.id].lastActionTime = Date.now(); createBullet(this, data.x, data.y, data.angle, data.charType, false, data.id, true, data.power); });
     socket.on('playerMoved', info => { if(otherPlayers[info.id]) { otherPlayers[info.id].setPosition(info.x, info.y); otherPlayers[info.id].isInBush = info.isInBush; otherPlayers[info.id].bushId = info.bushId; }});
     socket.on('hpUpdate', data => {
         let t = (data.id === socket.id) ? player : otherPlayers[data.id];
         if (t) { 
-            t.hp = data.hp; 
-            if (data.hp <= 0 && t.visible) {
-                t.setVisible(false);
-                if (data.id === socket.id) startRespawnSequence(this);
-            }
+            t.hp = data.hp; t.lastActionTime = Date.now(); 
+            if (data.hp <= 0 && t.visible) { t.setVisible(false); if (data.id === socket.id) startRespawnSequence(this); }
             if (data.stun) { t.isStunned = true; t.setTint(0xffff00); this.time.delayedCall(1500, () => { t.isStunned = false; t.clearTint(); }); }
         }
     });
@@ -88,13 +85,11 @@ function create() {
         let t = (info.id === socket.id) ? player : otherPlayers[info.id];
         if (t) { t.hp = 100; t.setPosition(info.x, info.y); t.setVisible(true); if(info.id === socket.id) { respawnText.setText(''); ammo = 3; ultGage = 0; isStunned = false; isActionLocked = false; }}
     });
-    socket.on('updateRanking', playersData => {
+    socket.on('updateRanking', ps => {
         const list = document.getElementById('rankingList');
-        const sorted = Object.values(playersData).sort((a, b) => b.kills - a.kills);
-        list.innerHTML = sorted.map(p => `<div>${p.userName}: ${p.kills}</div>`).join('');
+        if(list) list.innerHTML = Object.values(ps).sort((a, b) => b.kills - a.kills).map(p => `<div>${p.userName}: ${p.kills}</div>`).join('');
     });
     socket.on('showPin', data => { let t = (data.id === socket.id) ? player : otherPlayers[data.id]; if(t) displayPin(this, t, data.emoji); });
-    socket.on('playerDisconnected', id => { if(otherPlayers[id]) { if(otherPlayers[id].p) otherPlayers[id].p.destroy(); otherPlayers[id].ui.destroy(); otherPlayers[id].nameTag.destroy(); otherPlayers[id].destroy(); delete otherPlayers[id]; }});
 }
 
 function update() {
@@ -105,47 +100,49 @@ function update() {
             let speed = { shelly: 220, spike: 220, edgar: 270, frank: 160 }[player.charType] || 220;
             if (isMoving) player.body.setVelocity(moveData.x * speed, moveData.y * speed);
         }
-
-        // エイムガイドの描画
-        if (isAiming || isUltAiming) {
-            drawAimGuide(player.charType, shootData.angle, isUltAiming);
-        }
+        if (isAiming || isUltAiming) drawAimGuide(player.charType, shootData.angle, isUltAiming, shootData.power);
 
         let bId = null;
         this.physics.overlap(player, bushes, (p, b) => bId = b.bushId);
-        player.isInBush = !!bId; player.setAlpha(player.isInBush ? 0.6 : 1);
+        player.isInBush = !!bId; player.bushId = bId;
+        player.setAlpha(player.isInBush ? 0.6 : 1);
         socket.emit('playerMovement', { x: player.x, y: player.y, isInBush: player.isInBush, bushId: bId });
         updateUI(player);
     }
-    Object.values(otherPlayers).forEach(op => updateUI(op));
+
+    Object.values(otherPlayers).forEach(op => {
+        let isVisible = true;
+        let timeSinceAction = Date.now() - (op.lastActionTime || 0);
+        if (op.isInBush && timeSinceAction > 1500) {
+            if (!player || !player.isInBush || player.bushId !== op.bushId) isVisible = false;
+        }
+        op.setVisible(isVisible && op.hp > 0);
+        updateUI(op);
+    });
 }
 
-function drawAimGuide(charType, angle, isUlt) {
-    aimGuide.lineStyle(2, 0xffffff, 0.4);
-    aimGuide.fillStyle(0xffffff, 0.15);
-    
-    let range = isUlt ? 250 : { shelly: 200, spike: 200, edgar: 80, frank: 180 }[charType];
-    
-    if (charType === 'edgar' && isUlt) {
-        // エドガーのウルトは着地地点の円
-        aimGuide.strokeCircle(player.x + Math.cos(angle)*range, player.y + Math.sin(angle)*range, 45);
-        aimGuide.fillCircle(player.x + Math.cos(angle)*range, player.y + Math.sin(angle)*range, 45);
+function drawAimGuide(charType, angle, isUlt, power) {
+    aimGuide.lineStyle(2, 0xffffff, 0.4); aimGuide.fillStyle(0xffffff, 0.15);
+    let maxRange = isUlt ? 280 : { shelly: 200, spike: 200, edgar: 80, frank: 180 }[charType];
+    let currentRange = maxRange * power; // スティックの倒し具合で距離を可変に
+
+    if ((charType === 'edgar' || charType === 'spike') && isUlt) {
+        // 円形ターゲット（着地/着弾地点）を移動させる
+        let targetX = player.x + Math.cos(angle) * currentRange;
+        let targetY = player.y + Math.sin(angle) * currentRange;
+        aimGuide.strokeCircle(targetX, targetY, 45);
+        aimGuide.fillCircle(targetX, targetY, 45);
+        // 自分からの軌道線も薄く引く
+        aimGuide.lineStyle(1, 0xffffff, 0.2);
+        aimGuide.lineBetween(player.x, player.y, targetX, targetY);
     } else if (charType === 'shelly' || charType === 'frank' || (charType === 'spike' && isUlt)) {
-        // 扇形ガイド
-        aimGuide.beginPath();
-        aimGuide.moveTo(player.x, player.y);
-        aimGuide.arc(player.x, player.y, range, angle - 0.3, angle + 0.3);
-        aimGuide.closePath();
-        aimGuide.fillPath();
-        aimGuide.strokePath();
+        aimGuide.beginPath(); aimGuide.moveTo(player.x, player.y);
+        aimGuide.arc(player.x, player.y, maxRange, angle - 0.3, angle + 0.3);
+        aimGuide.closePath(); aimGuide.fillPath(); aimGuide.strokePath();
     } else {
-        // 直線ガイド
-        let endX = player.x + Math.cos(angle) * range;
-        let endY = player.y + Math.sin(angle) * range;
+        let endX = player.x + Math.cos(angle) * maxRange; let endY = player.y + Math.sin(angle) * maxRange;
         aimGuide.lineBetween(player.x, player.y, endX, endY);
-        if (charType === 'spike' && !isUlt) {
-            aimGuide.strokeCircle(endX, endY, 15);
-        }
+        if (charType === 'spike' && !isUlt) aimGuide.strokeCircle(endX, endY, 15);
     }
 }
 
@@ -160,7 +157,7 @@ function addPlayer(s, info) {
         if(p.visible && p.hp > 0) {
             let d = b.isUlt ? { shelly: 35, spike: 15, edgar: 15, frank: 40 }[b.charType] : { shelly: 25, spike: 20, edgar: 15, frank: 35 }[b.charType];
             b.destroy();
-            socket.emit('updateHP', { id: socket.id, hp: Math.max(0, p.hp - d), attackerId: b.shooterId, stun: b.isFrankUlt, reveal: true });
+            socket.emit('updateHP', { id: socket.id, hp: Math.max(0, p.hp - d), attackerId: b.shooterId, stun: b.isFrankUlt });
         }
     });
 }
@@ -173,7 +170,6 @@ function addOtherPlayers(s, info) {
     otherPlayers[info.id] = op;
     s.physics.add.overlap(bullets, op, (target, b) => {
         if (target.visible && b.shooterId === socket.id) {
-            // ウルト蓄積：通常攻撃で1ヒットにつき12%〜20%上昇
             let gain = b.isUlt ? 0 : { shelly: 12, spike: 20, edgar: 15, frank: 25 }[player.charType];
             ultGage = Math.min(100, ultGage + gain);
             if (player.charType === 'edgar') player.hp = Math.min(100, player.hp + 3);
@@ -181,7 +177,7 @@ function addOtherPlayers(s, info) {
     });
 }
 
-function createBullet(s, x, y, angle, charType, isMine, shooterId, isUlt) {
+function createBullet(s, x, y, angle, charType, isMine, shooterId, isUlt, power = 1.0) {
     let group = isMine ? bullets : enemyBullets;
     let bConfig = (sx, sy, ang, spd, life, size, col, isRect) => {
         let b = isRect ? s.add.rectangle(sx, sy, size, size, col) : s.add.circle(sx, sy, size, col);
@@ -194,15 +190,19 @@ function createBullet(s, x, y, angle, charType, isMine, shooterId, isUlt) {
     };
 
     if (isUlt) {
+        let range = 280 * power;
         if (charType === 'shelly') { for(let i=-4; i<=4; i++) bConfig(x, y, angle + i*0.15, 600, 400, 7, 0xffff00, false); }
         else if (charType === 'spike') {
-            let tx = x + Math.cos(angle)*200, ty = y + Math.sin(angle)*200;
+            let tx = x + Math.cos(angle) * range, ty = y + Math.sin(angle) * range;
             let zone = s.add.circle(tx, ty, 100, 0x2ecc71, 0.3).setDepth(1);
             s.physics.add.existing(zone);
             s.time.addEvent({ delay: 500, repeat: 10, callback: () => { if(s.physics.overlap(player, zone)) socket.emit('updateHP', { id: socket.id, hp: Math.max(0, player.hp - 5), attackerId: shooterId }); }});
             s.time.delayedCall(5000, () => zone.destroy());
         } else if (charType === 'edgar') {
-            if(isMine) { isActionLocked = true; s.tweens.add({ targets: player, x: x+Math.cos(angle)*250, y: y+Math.sin(angle)*250, duration: 600, ease: 'Power2', onComplete: () => isActionLocked = false }); }
+            if(isMine) { 
+                isActionLocked = true; 
+                s.tweens.add({ targets: player, x: x + Math.cos(angle) * range, y: y + Math.sin(angle) * range, duration: 600, ease: 'Power2', onComplete: () => isActionLocked = false }); 
+            }
         } else if (charType === 'frank') { let b = bConfig(x, y, angle, 400, 400, 80, 0xffff00, true); b.isFrankUlt = true; }
     } else {
         if (charType === 'frank') { for(let i=-2; i<=2; i++) bConfig(x, y, angle+i*0.2, 400, 350, 25, 0x795548, true); }
@@ -212,110 +212,20 @@ function createBullet(s, x, y, angle, charType, isMine, shooterId, isUlt) {
     }
 }
 
-function explodeSpike(s, x, y, group, shooterId) {
-    for(let i=0; i<6; i++) {
-        let b = s.add.circle(x, y, 6, 0x2ecc71); b.isSplit = true;
-        group.add(b); s.physics.add.existing(b);
-        s.physics.velocityFromRotation((Math.PI*2/6)*i, 300, b.body.velocity);
-        s.physics.add.collider(b, walls, () => b.destroy());
-        s.time.delayedCall(300, () => b.active && b.destroy());
-        b.charType = 'spike'; b.shooterId = shooterId;
-    }
-}
-
 function setupVirtualJoysticks(scene) {
     moveJoy = scene.add.circle(130, 470, 65, 0x000000, 0.3).setDepth(150).setScrollFactor(0);
     moveThumb = scene.add.circle(130, 470, 35, 0xcccccc, 0.5).setDepth(151).setScrollFactor(0);
     shootJoy = scene.add.circle(670, 470, 65, 0x000000, 0.3).setDepth(150).setScrollFactor(0);
     shootThumb = scene.add.circle(670, 470, 35, 0xff0000, 0.5).setDepth(151).setScrollFactor(0);
-    
-    // ウルトボタンとゲージ
     ultBtn = scene.add.circle(550, 500, 42, 0x333333, 0.8).setDepth(150).setScrollFactor(0).setInteractive();
     ultGageGraphics = scene.add.graphics().setDepth(151).setScrollFactor(0);
     
     scene.input.addPointer(2);
-    scene.input.on('pointerdown', p => {
-        if(Phaser.Math.Distance.Between(p.x, p.y, ultBtn.x, ultBtn.y) < 45 && ultGage >= 100) { 
-            isUltAiming = true; shootThumb.setFillStyle(0xffff00); 
-        }
-    });
+    scene.input.on('pointerdown', p => { if(Phaser.Math.Distance.Between(p.x, p.y, ultBtn.x, ultBtn.y) < 45 && ultGage >= 100) { isUltAiming = true; shootThumb.setFillStyle(0xffff00); } });
     scene.input.on('pointermove', p => {
         if (!p.isDown) return;
         if (p.x < 400) {
             let a = Phaser.Math.Angle.Between(moveJoy.x, moveJoy.y, p.x, p.y);
             let d = Math.min(Phaser.Math.Distance.Between(moveJoy.x, moveJoy.y, p.x, p.y), 65);
             moveThumb.setPosition(moveJoy.x + Math.cos(a)*d, moveJoy.y + Math.sin(a)*d);
-            moveData = { x: Math.cos(a)*(d/65), y: Math.sin(a)*(d/65) }; isMoving = true;
-        } else {
-            let a = Phaser.Math.Angle.Between(shootJoy.x, shootJoy.y, p.x, p.y);
-            let d = Math.min(Phaser.Math.Distance.Between(shootJoy.x, shootJoy.y, p.x, p.y), 65);
-            shootThumb.setPosition(shootJoy.x + Math.cos(a)*d, shootJoy.y + Math.sin(a)*d);
-            shootData = { angle: a, dist: d }; isAiming = true;
-        }
-    });
-    scene.input.on('pointerup', p => {
-        if (p.x < 400) { moveThumb.setPosition(130, 470); isMoving = false; }
-        else {
-            if (isUltAiming && shootData.dist > 20) {
-                socket.emit('ult', { id: socket.id, x: player.x, y: player.y, angle: shootData.angle, charType: player.charType });
-                createBullet(scene, player.x, player.y, shootData.angle, player.charType, true, socket.id, true);
-                ultGage = 0; isUltAiming = false; shootThumb.setFillStyle(0xff0000);
-            } else if (isAiming && shootData.dist > 20 && ammo > 0) {
-                if(player.charType === 'frank') { isActionLocked = true; scene.time.delayedCall(400, () => isActionLocked = false); }
-                socket.emit('shoot', { id: socket.id, x: player.x, y: player.y, angle: shootData.angle, charType: player.charType });
-                createBullet(scene, player.x, player.y, shootData.angle, player.charType, true, socket.id, false);
-                ammo--; startReload(scene);
-            }
-            shootThumb.setPosition(670, 470); isAiming = false; isUltAiming = false; shootThumb.setFillStyle(0xff0000);
-        }
-    });
-}
-
-function updateUI(t) {
-    t.ui.clear(); if (!t.visible) { t.nameTag.setVisible(false); return; }
-    t.nameTag.setVisible(true).setPosition(t.x, t.y - 55);
-    t.ui.fillStyle(0xc0392b); t.ui.fillRect(t.x-20, t.y-35, 40, 6);
-    t.ui.fillStyle(0x2ecc71); t.ui.fillRect(t.x-20, t.y-35, (t.hp/100)*40, 6);
-    
-    if (t === player) {
-        for (let i=0; i<3; i++) { t.ui.fillStyle(i < ammo ? 0xf1c40f : 0x555555); t.ui.fillRect(t.x-20+(i*14), t.y-25, 12, 4); }
-        
-        // ウルトボタンのゲージ描画
-        ultGageGraphics.clear();
-        let r = 42;
-        // 背景の黒円
-        ultGageGraphics.fillStyle(0x222222, 0.8);
-        ultGageGraphics.fillCircle(ultBtn.x, ultBtn.y, r);
-        
-        // 黄色の充填ゲージ（下から上へ）
-        if (ultGage > 0) {
-            ultGageGraphics.fillStyle(0xf1c40f, 1);
-            let mask = new Phaser.Geom.Circle(ultBtn.x, ultBtn.y, r);
-            let percent = ultGage / 100;
-            let rectH = r * 2 * percent;
-            ultGageGraphics.fillRect(ultBtn.x - r, ultBtn.y + r - rectH, r * 2, rectH);
-            // ゲージが丸からはみ出ないように円形にクリップ（簡易的に円で上書き描画）
-            if (ultGage < 100) {
-                ultGageGraphics.lineStyle(4, 0x333333, 1);
-                ultGageGraphics.strokeCircle(ultBtn.x, ultBtn.y, r);
-            } else {
-                ultGageGraphics.lineStyle(4, 0xffffff, 1);
-                ultGageGraphics.strokeCircle(ultBtn.x, ultBtn.y, r);
-            }
-        }
-    }
-}
-
-function startReload(scene) { if(isReloading) return; isReloading = true; scene.time.addEvent({ delay: 1200, callback: () => { ammo++; if(ammo<3) isReloading=false, startReload(scene); else isReloading=false; updateUI(player); }}); }
-
-function startRespawnSequence(s) {
-    let count = 3; respawnText.setText(`復活まで: ${count}`);
-    let interval = setInterval(() => {
-        count--; if (count > 0) respawnText.setText(`復活まで: ${count}`);
-        else { clearInterval(interval); respawnText.setText(''); socket.emit('respawnRequest'); }
-    }, 1000);
-}
-
-function displayPin(s, t, e) { if(t.p) t.p.destroy(); t.p = s.add.text(t.x, t.y-80, e, {fontSize:'30px'}).setOrigin(0.5); s.time.delayedCall(2000, () => t.p && t.p.destroy()); }
-window.launchGame = type => { document.getElementById('overlay').style.display = 'none'; socket.emit('joinGame', { charType: type, userName: document.getElementById('nameInput').value || 'No Name' }); };
-window.sendPin = e => { if(socket && player && player.visible) socket.emit('sendPin', { id: socket.id, emoji: e }); };
+            moveData = { x: Math.cos(a)*(d/65), y: Math
