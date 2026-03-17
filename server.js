@@ -17,7 +17,6 @@ io.on('connection', (socket) => {
             hp: 100, kills: 0, isInBush: false, bushId: null
         };
         io.emit('currentPlayers', players);
-        io.emit('updateRanking', players);
     });
 
     socket.on('playerMovement', (data) => {
@@ -33,11 +32,9 @@ io.on('connection', (socket) => {
 
     socket.on('updateHP', (data) => {
         if (players[data.id]) {
-            let oldHp = players[data.id].hp;
             players[data.id].hp = data.hp;
-            io.emit('hpUpdate', { id: data.id, hp: data.hp, reveal: data.reveal, stun: data.stun });
-
-            if (oldHp > 0 && data.hp <= 0 && data.attackerId && players[data.attackerId]) {
+            io.emit('hpUpdate', data);
+            if (data.hp <= 0 && data.attackerId && players[data.attackerId]) {
                 players[data.attackerId].kills++;
                 io.emit('updateRanking', players);
             }
@@ -56,7 +53,6 @@ io.on('connection', (socket) => {
     socket.on('disconnect', () => {
         delete players[socket.id];
         io.emit('playerDisconnected', socket.id);
-        io.emit('updateRanking', players);
     });
 });
 
