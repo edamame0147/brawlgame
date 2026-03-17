@@ -3,61 +3,41 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Brawl Clone - Scroll Fix</title>
+    <title>Brawl Clone - Mobile Fix</title>
     <script src="https://cdn.jsdelivr.net/npm/phaser@3.60.0/dist/phaser-arcade-physics.min.js"></script>
     <script src="/socket.io/socket.io.js"></script>
     <style>
-        /* スクロールを許可する設定 */
         body { 
-            margin: 0; 
-            padding: 0;
-            background: #2c3e50; 
-            font-family: sans-serif; 
-            overflow-y: auto; /* 縦スクロールを許可 */
-            -webkit-overflow-scrolling: touch;
+            margin: 0; padding: 0; background: #2c3e50; 
+            overflow: hidden; position: fixed; width: 100%; height: 100%; 
+            touch-action: none; /* ブラウザのスクロールを完全に禁止 */
         }
+        canvas { display: block; margin: 0 auto; }
         
-        /* ゲームのキャンバスを中央寄せにする */
-        canvas {
-            display: block;
-            margin: 0 auto;
-            box-shadow: 0 0 20px rgba(0,0,0,0.5);
-            touch-action: none; /* ゲーム画面上でのブラウザスクロールを防止 */
+        #uiContainer {
+            position: fixed; top: 10px; right: 10px; width: 130px;
+            display: flex; flex-direction: column; gap: 5px; z-index: 1000;
         }
+        .ui-box { background: rgba(0, 0, 0, 0.7); color: white; padding: 8px; border-radius: 8px; font-size: 11px; }
+        .pins-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin-top: 4px; }
+        .pin-btn { background: #f1c40f; border: none; border-radius: 4px; padding: 6px; cursor: pointer; font-size: 16px; }
 
         #overlay {
             position: fixed; top: 0; left: 0; width: 100%; height: 100%;
             background: rgba(0,0,0,0.9); display: flex; justify-content: center;
-            align-items: center; z-index: 1000;
+            align-items: center; z-index: 2000;
         }
-        .login-box { text-align: center; color: white; background: #34495e; padding: 30px; border-radius: 20px; }
-        input { padding: 12px; font-size: 18px; border-radius: 8px; border: none; width: 220px; margin-bottom: 20px; outline: none; }
+        .login-box { text-align: center; color: white; background: #34495e; padding: 25px; border-radius: 20px; }
+        input { padding: 10px; font-size: 16px; border-radius: 8px; border: none; width: 180px; margin-bottom: 15px; }
         .char-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
-        .char-btn { padding: 15px; font-size: 14px; color: white; border: none; border-radius: 10px; cursor: pointer; font-weight: bold; }
+        .char-btn { padding: 12px; font-size: 12px; color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: bold; }
         .shelly { background: #3498db; } .spike { background: #2ecc71; } .edgar { background: #9b59b6; }
-        
-        /* UIの位置を調整（スクロールしても付いてくるように fixed） */
-        #uiContainer {
-            position: fixed; top: 10px; right: 10px; width: 150px;
-            display: flex; flex-direction: column; gap: 10px; z-index: 500;
-        }
-        .ui-box { background: rgba(0, 0, 0, 0.7); color: white; padding: 10px; border-radius: 10px; font-size: 12px; border: 1px solid #555; }
-        .pins-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; margin-top: 5px; }
-        .pin-btn {
-            background: #f1c40f; border: none; border-radius: 5px; padding: 8px 5px;
-            cursor: pointer; font-size: 18px; transition: 0.1s;
-        }
-        .pin-btn:active { transform: scale(0.9); }
     </style>
 </head>
 <body>
     <div id="uiContainer">
+        <div class="ui-box"><div id="rankingList"></div></div>
         <div class="ui-box">
-            <div style="font-weight: bold; border-bottom: 1px solid #aaa; margin-bottom: 5px;">キル数</div>
-            <div id="rankingList"></div>
-        </div>
-        <div class="ui-box">
-            <div style="font-weight: bold; border-bottom: 1px solid #aaa;">ピンズ</div>
             <div class="pins-grid">
                 <button class="pin-btn" onclick="sendPin('👍')">👍</button>
                 <button class="pin-btn" onclick="sendPin('👎')">👎</button>
@@ -68,8 +48,8 @@
     </div>
     <div id="overlay">
         <div class="login-box">
-            <h1>Brawl Clone</h1>
-            <input type="text" id="nameInput" placeholder="名前..." maxlength="10"><br>
+            <h2 style="margin:0 0 10px 0;">Brawl Clone</h2>
+            <input type="text" id="nameInput" placeholder="名前..." maxlength="8"><br>
             <div class="char-grid">
                 <button class="char-btn shelly" onclick="launchGame('shelly')">シェリー</button>
                 <button class="char-btn spike" onclick="launchGame('spike')">スパイク</button>
