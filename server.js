@@ -1,7 +1,6 @@
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
-
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: "*" } });
@@ -12,37 +11,30 @@ let players = {};
 
 io.on('connection', (socket) => {
     socket.on('joinGame', (data) => {
+        // プレイヤー情報に name を追加
         players[socket.id] = {
-            x: 400, y: 300,
-            id: socket.id,
+            x: 400, y: 300, id: socket.id,
             charType: data.charType,
-            hp: 100,
-            isInBush: false,
-            bushId: null
+            name: data.name || "Guest",
+            hp: 100, isInBush: false, bushId: null
         };
         io.emit('currentPlayers', players);
     });
 
     socket.on('playerMovement', (data) => {
         if (players[socket.id]) {
-            players[socket.id].x = data.x;
-            players[socket.id].y = data.y;
-            players[socket.id].isInBush = data.isInBush;
-            players[socket.id].bushId = data.bushId;
+            Object.assign(players[socket.id], data);
             socket.broadcast.emit('playerMoved', players[socket.id]);
         }
     });
 
     socket.on('shoot', (data) => {
-        socket.broadcast.emit('enemyShoot', {
-            id: socket.id, x: data.x, y: data.y, angle: data.angle, charType: data.charType
-        });
+        socket.broadcast.emit('enemyShoot', data);
     });
 
     socket.on('updateHP', (data) => {
         if (players[data.id]) {
             players[data.id].hp = data.hp;
-            // revealフラグ（ダメージを受けて姿を現す）を全員に送る
             io.emit('hpUpdate', { id: data.id, hp: data.hp, reveal: data.reveal });
         }
     });
@@ -56,10 +48,14 @@ io.on('connection', (socket) => {
         }
     });
 
+    // タブを閉じた時の処理
     socket.on('disconnect', () => {
-        delete players[socket.id];
-        io.emit('playerDisconnected', socket.id);
+        if (players[socket.id]) {
+            delete players[socket.id];
+            io.emit('playerDisconnected', socket.id);
+        }
     });
 });
 
-server.listen(3000, () => console.log(`Server running on http://localhost:3000`));
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, () => console.log(`Server running on port ${PORT}`));
