@@ -1,25 +1,30 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Brawl Clone</title>
-    <script src="https://cdn.jsdelivr.net/npm/phaser@3.60.0/dist/phaser-arcade-physics.min.js"></script>
-    <script src="/socket.io/socket.io.js"></script>
+    <meta charset="UTF-8">
+    <title>Brawl Stars Clone</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #222; font-family: sans-serif; }
+        #setup {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            text-align: center; color: white; background: rgba(0,0,0,0.8);
+            padding: 30px; border-radius: 15px; z-index: 1000;
+        }
+        input { padding: 10px; font-size: 18px; border-radius: 5px; border: none; margin-bottom: 20px; width: 200px; }
+        button { padding: 10px 20px; font-size: 18px; cursor: pointer; border: none; border-radius: 5px; color: white; margin: 5px; }
+        .blue { background: #3498db; }
+        .green { background: #2ecc71; }
+    </style>
 </head>
 <body>
-    <body>
-    <div id="setup-menu" style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); text-align: center; z-index: 10;">
-        <h1 style="color: white; font-family: sans-serif;">キャラ選択</h1>
-        <button onclick="startGame('shelly')" style="padding: 20px; background: blue; color: white;">シェリー</button>
-        <button onclick="startGame('spike')" style="padding: 20px; background: green; color: white;">スパイク</button>
+    <div id="setup">
+        <h2>BRAWL CLONE</h2>
+        <input type="text" id="username" placeholder="名前を入力" maxlength="10"><br>
+        <button class="blue" onclick="launchGame('shelly')">シェリーを選択</button>
+        <button class="green" onclick="launchGame('spike')">スパイクを選択</button>
     </div>
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/phaser@3.60.0/dist/phaser.min.js"></script>
     <script src="game.js"></script>
-    <script>
-        function startGame(type) {
-            document.getElementById('setup-menu').style.display = 'none';
-            // game.js内の関数を呼び出す
-            window.launchGame(type);
-        }
-    </script>
-</body>
 </body>
 </html>
