@@ -51,10 +51,15 @@ io.on('connection', (socket) => {
     });
 
 　　socket.on('disconnect', () => {
-    console.log('User disconnected:', socket.id);
-    // 全員に「このIDを削除して」と即座に通知
-    io.emit('playerDisconnected', socket.id);
-    delete players[socket.id];
+    if (players[socket.id]) {
+        console.log(`User disconnected: ${players[socket.id].userName} (${socket.id})`);
+        // 1. プレイヤーリストから削除
+        delete players[socket.id];
+        // 2. 他の全員に「この人を消して」と通知
+        io.emit('playerDisconnected', socket.id);
+        // 3. 最新のランキングを全員に送る（これでランキングからも消える）
+        io.emit('updateRanking', players);
+    }
 });
 });
 
