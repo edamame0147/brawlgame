@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Brawl Clone</title>
+    <script src="https://cdn.jsdelivr.net/npm/phaser@3.60.0/dist/phaser-arcade-physics.min.js"></script>
+    <script src="/socket.io/socket.io.js"></script>
+</head>
+<body>
+    <body>
+    <div id="setup-menu" style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); text-align: center; z-index: 10;">
+        <h1 style="color: white; font-family: sans-serif;">キャラ選択</h1>
+        <button onclick="startGame('shelly')" style="padding: 20px; background: blue; color: white;">シェリー</button>
+        <button onclick="startGame('spike')" style="padding: 20px; background: green; color: white;">スパイク</button>
+    </div>
+    <script src="game.js"></script>
+    <script>
+        function startGame(type) {
+            document.getElementById('setup-menu').style.display = 'none';
+            // game.js内の関数を呼び出す
+            window.launchGame(type);
+        }
+    </script>
+</body>
+</body>
+</html>
