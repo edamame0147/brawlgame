@@ -178,7 +178,6 @@ function addOtherPlayers(s, info) {
     op.nameTag = s.add.text(info.x, info.y - 55, info.userName, { fontSize: '14px', fill: '#ffffff' }).setOrigin(0.5).setDepth(10);
     otherPlayers[info.id] = op;
     
-    // 自分の弾が敵に当たった時のウルト増加判定
     s.physics.add.overlap(bullets, op, (target, b) => {
         if (target.visible && b.active && b.shooterId === socket.id) {
             let gain = b.isUlt ? 0 : { shelly: 12, spike: 20, edgar: 15, frank: 25 }[player.charType];
@@ -196,7 +195,6 @@ function createBullet(s, x, y, angle, charType, isMine, shooterId, isUlt, power 
         group.add(b); s.physics.add.existing(b);
         s.physics.velocityFromRotation(ang, spd, b.body.velocity);
         
-        // 壁との衝突判定（これで弾が壁をすり抜けない）
         s.physics.add.collider(b, walls, () => { 
             if(charType==='spike' && !b.isSplit) explodeSpike(s, b.x, b.y, group, shooterId); 
             b.destroy(); 
@@ -250,12 +248,17 @@ function setupVirtualJoysticks(scene) {
     moveThumb = scene.add.circle(130, 470, 35, 0xcccccc, 0.5).setDepth(151).setScrollFactor(0);
     shootJoy = scene.add.circle(670, 470, 65, 0x000000, 0.3).setDepth(150).setScrollFactor(0);
     shootThumb = scene.add.circle(670, 470, 35, 0xff0000, 0.5).setDepth(151).setScrollFactor(0);
+    
+    // ウルトボタン
     ultBtn = scene.add.circle(550, 500, 42, 0x333333, 0.8).setDepth(150).setScrollFactor(0).setInteractive();
+    
+    // ウルトゲージ用グラフィックス
     ultGageGraphics = scene.add.graphics().setDepth(151).setScrollFactor(0);
     
-    let maskShape = scene.make.graphics();
+    // マスク用の円形（ここもScrollFactor(0)にするのが肝）
+    let maskShape = scene.make.graphics().setScrollFactor(0);
     maskShape.fillStyle(0xffffff);
-    maskShape.fillCircle(550, 500, 42);
+    maskShape.fillCircle(550, 500, 42); // 画面上の絶対位置
     ultGageMask = maskShape.createGeometryMask();
     ultGageGraphics.setMask(ultGageMask);
 
@@ -308,14 +311,19 @@ function updateUI(t) {
     t.ui.fillStyle(0x2ecc71); t.ui.fillRect(t.x-20, t.y-35, (t.hp/100)*40, 6);
     if (t === player) {
         for (let i=0; i<3; i++) { t.ui.fillStyle(i < ammo ? 0xf1c40f : 0x555555); t.ui.fillRect(t.x-20+(i*14), t.y-25, 12, 4); }
+        
+        // ウルトゲージ描画（画面座標固定）
         ultGageGraphics.clear();
         ultGageGraphics.fillStyle(0x222222, 0.8);
         ultGageGraphics.fillCircle(ultBtn.x, ultBtn.y, 42);
+        
         if (ultGage > 0) {
             ultGageGraphics.fillStyle(ultGage >= 100 ? 0xf1c40f : 0xe67e22, 1);
             let rectH = 84 * (ultGage / 100);
+            // マスクされているので、ボタンの位置に合わせて四角を描画するだけでOK
             ultGageGraphics.fillRect(ultBtn.x - 42, ultBtn.y + 42 - rectH, 84, rectH);
         }
+        
         ultGageGraphics.lineStyle(4, ultGage >= 100 ? 0xffffff : 0x333333);
         ultGageGraphics.strokeCircle(ultBtn.x, ultBtn.y, 42);
     }
