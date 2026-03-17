@@ -2,10 +2,7 @@ const config = {
     type: Phaser.AUTO,
     width: 800, height: 600,
     backgroundColor: '#34495e',
-    scale: {
-        mode: Phaser.Scale.FIT, // 画面に合わせてリサイズ
-        autoCenter: Phaser.Scale.CENTER_BOTH
-    },
+    scale: { mode: Phaser.Scale.FIT, autoCenter: Phaser.Scale.CENTER_BOTH },
     physics: { default: 'arcade', arcade: { gravity: { y: 0 } } },
     scene: { preload, create, update }
 };
@@ -15,12 +12,10 @@ let socket, player, bullets, enemyBullets, walls, bushes;
 let otherPlayers = {};
 let ammo = 3, isReloading = false, respawnText, respawnTimerInterval;
 
-// スマホ操作用
-let moveJoy, shootJoy; // ジョイスティックの背景
-let moveThumb, shootThumb; // 動く丸
+// ジョイスティック用
+let moveJoy, shootJoy, moveThumb, shootThumb;
 let isMoving = false, isAiming = false;
-let moveData = { x: 0, y: 0 };
-let shootData = { x: 0, y: 0 };
+let moveData = { x: 0, y: 0 }, shootData = { angle: 0, dist: 0 };
 
 function preload() {}
 
@@ -38,14 +33,24 @@ function create() {
 
     respawnText = this.add.text(400, 300, '', { fontSize: '48px', fill: '#fff', fontStyle: 'bold' }).setOrigin(0.5).setDepth(200);
 
-    // --- バーチャルパッド作成 ---
     setupVirtualJoysticks(this);
 
+    // プレイヤーの追加
     socket.on('currentPlayers', (players) => {
         Object.keys(players).forEach((id) => {
             if (id === socket.id && !player) addPlayer(this, players[id]);
             else if (id !== socket.id && !otherPlayers[id]) addOtherPlayers(this, players[id]);
         });
+    });
+
+    // 切断通知：キャラを削除
+    socket.on('playerDisconnected', (id) => {
+        if (otherPlayers[id]) {
+            if (otherPlayers[id].ui) otherPlayers[id].ui.destroy();
+            if (otherPlayers[id].nameText) otherPlayers[id].nameText.destroy();
+            otherPlayers[id].destroy();
+            delete otherPlayers[id];
+        }
     });
 
     socket.on('enemyShoot', (data) => createBullet(this, data.x, data.y, data.angle, data.charType, false));
@@ -60,13 +65,14 @@ function create() {
     });
 
     socket.on('hpUpdate', (data) => {
-        let target = (data.id === socket.id) ? player : otherPlayers[data.id];
-        if (target) {
-            target.hp = data.hp;
-            if (data.reveal) target.revealTimer = 60; 
-            updateUI(target);
-            if (target.hp <= 0) {
-                target.setVisible(false);
+        let t = (data.id === socket.id) ? player : otherPlayers[data.id];
+        if (t) {
+            t.hp = data.hp;
+            if (data.reveal) t.revealTimer = 60;
+            updateUI(t);
+            if (t.hp <= 0) {
+                t.setVisible(false);
+                if (t.nameText) t.nameText.setVisible(false);
                 if (data.id === socket.id) startRespawnSequence(this);
             }
         }
@@ -85,12 +91,7 @@ function create() {
 function update() {
     if (player && player.visible) {
         player.body.setVelocity(0);
-        const speed = 200;
-
-        // スマホ移動
-        if (isMoving) {
-            player.body.setVelocity(moveData.x * speed, moveData.y * speed);
-        }
+        if (isMoving) player.body.setVelocity(moveData.x * 200, moveData.y * 200);
 
         let bushId = null;
         this.physics.overlap(player, bushes, (p, b) => { bushId = b.bushId; });
@@ -99,122 +100,32 @@ function update() {
         player.setAlpha(player.isInBush ? 0.6 : 1);
         
         if (player.revealTimer > 0) player.revealTimer--;
-
         socket.emit('playerMovement', { x: player.x, y: player.y, isInBush: player.isInBush, bushId: player.bushId });
         updateUI(player);
     }
     Object.values(otherPlayers).forEach(op => { if(op.revealTimer > 0) op.revealTimer--; });
 }
 
-// --- ジョイスティックの設定 ---
-function setupVirtualJoysticks(scene) {
-    const joyRadius = 60;
-    const thumbRadius = 30;
-
-    // 左：移動用
-    moveJoy = scene.add.circle(120, 480, joyRadius, 0x000000, 0.3).setDepth(150).setScrollFactor(0);
-    moveThumb = scene.add.circle(120, 480, thumbRadius, 0xcccccc, 0.5).setDepth(151).setScrollFactor(0);
-
-    // 右：攻撃用
-    shootJoy = scene.add.circle(680, 480, joyRadius, 0x000000, 0.3).setDepth(150).setScrollFactor(0);
-    shootThumb = scene.add.circle(680, 480, thumbRadius, 0xff0000, 0.5).setDepth(151).setScrollFactor(0);
-
-    scene.input.addPointer(2); // マルチタッチ対応（2本指まで）
-
-    scene.input.on('pointerdown', (pointer) => {
-        if (pointer.x < 400) moveThumb.setPosition(pointer.x, pointer.y); // タップした位置に移動（左）
-        else shootThumb.setPosition(pointer.x, pointer.y); // タップした位置に移動（右）
-    });
-
-    scene.input.on('pointermove', (pointer) => {
-        if (pointer.x < 400 && pointer.isDown) {
-            // 移動計算
-            let dist = Phaser.Math.Distance.Between(moveJoy.x, moveJoy.y, pointer.x, pointer.y);
-            let angle = Phaser.Math.Angle.Between(moveJoy.x, moveJoy.y, pointer.x, pointer.y);
-            let limit = Math.min(dist, joyRadius);
-            moveThumb.x = moveJoy.x + Math.cos(angle) * limit;
-            moveThumb.y = moveJoy.y + Math.sin(angle) * limit;
-            moveData = { x: Math.cos(angle) * (limit/joyRadius), y: Math.sin(angle) * (limit/joyRadius) };
-            isMoving = true;
-        } else if (pointer.x >= 400 && pointer.isDown) {
-            // 攻撃エイム
-            let dist = Phaser.Math.Distance.Between(shootJoy.x, shootJoy.y, pointer.x, pointer.y);
-            let angle = Phaser.Math.Angle.Between(shootJoy.x, shootJoy.y, pointer.x, pointer.y);
-            let limit = Math.min(dist, joyRadius);
-            shootThumb.x = shootJoy.x + Math.cos(angle) * limit;
-            shootThumb.y = shootJoy.y + Math.sin(angle) * limit;
-            shootData = { angle: angle, dist: dist };
-            isAiming = true;
-        }
-    });
-
-    scene.input.on('pointerup', (pointer) => {
-        if (pointer.x < 400) {
-            moveThumb.setPosition(moveJoy.x, moveJoy.y);
-            isMoving = false;
-        } else {
-            // 指を離したときに発射（エイムがある程度動いていれば）
-            if (isAiming && shootData.dist > 20 && ammo > 0 && player.visible) {
-                handleAttack(scene, shootData.angle);
-                ammo--;
-                if (!isReloading) startReload(scene);
-            }
-            shootThumb.setPosition(shootJoy.x, shootJoy.y);
-            isAiming = false;
-        }
-    });
-}
-
-// ---------------- 補助関数 ----------------
-
-function createWall(scene, x, y, w, h) {
-    const wall = scene.add.rectangle(x, y, w, h, 0x95a5a6);
-    walls.add(wall);
-    scene.physics.add.existing(wall, true);
-}
-
-function createBush(scene, x, y, w, h, id) {
-    const bush = scene.add.rectangle(x, y, w, h, 0x27ae60, 0.5);
-    bush.bushId = id;
-    bushes.add(bush);
-}
-
-function addPlayer(scene, info) {
-    player = scene.add.circle(info.x, info.y, 20, info.charType === 'shelly' ? 0x3498db : 0x2ecc71);
-    scene.physics.add.existing(player);
-    player.charType = info.charType; player.hp = 100; player.revealTimer = 0;
-    player.ui = scene.add.graphics().setDepth(10);
-    scene.physics.add.collider(player, walls);
-    scene.physics.add.overlap(player, enemyBullets, (p, b) => {
-        if(p.visible) {
-            b.destroy(); 
-            socket.emit('updateHP', { id: socket.id, hp: Math.max(0, p.hp - 15), reveal: true });
-        }
-    });
-}
-
-function addOtherPlayers(scene, info) {
-    const op = scene.add.circle(info.x, info.y, 20, info.charType === 'shelly' ? 0x3498db : 0x2ecc71);
-    scene.physics.add.existing(op);
-    op.id = info.id; op.hp = 100; op.revealTimer = 0;
-    op.ui = scene.add.graphics().setDepth(10);
-    otherPlayers[info.id] = op;
-    scene.physics.add.overlap(bullets, op, (target, b) => {
-        if(target.visible) b.destroy();
-    });
-}
-
 function updateUI(target) {
     target.ui.clear();
-    let isVisible = true;
-    if (target !== player && target.isInBush) {
-        isVisible = false;
-        if (player.isInBush && player.bushId === target.bushId) isVisible = true;
-        if (target.revealTimer > 0) isVisible = true;
-        if (Phaser.Math.Distance.Between(player.x, player.y, target.x, target.y) < 70) isVisible = true;
+    
+    // 名前の作成と位置
+    if (!target.nameText) {
+        target.nameText = target.scene.add.text(target.x, target.y - 50, target.playerName, { fontSize: '14px', fill: '#fff', stroke: '#000', strokeThickness: 2 }).setOrigin(0.5);
     }
-    target.setVisible(isVisible);
-    if (!isVisible || !target.visible) return;
+    target.nameText.setPosition(target.x, target.y - 50);
+
+    let visible = true;
+    if (target !== player && target.isInBush) {
+        visible = false;
+        if (player.isInBush && player.bushId === target.bushId) visible = true;
+        if (target.revealTimer > 0) visible = true;
+        if (Phaser.Math.Distance.Between(player.x, player.y, target.x, target.y) < 70) visible = true;
+    }
+    target.setVisible(visible);
+    target.nameText.setVisible(visible);
+
+    if (!visible || !target.visible) return;
 
     target.ui.fillStyle(0xc0392b); target.ui.fillRect(target.x - 20, target.y - 35, 40, 6);
     target.ui.fillStyle(0x2ecc71); target.ui.fillRect(target.x - 20, target.y - 35, (target.hp / 100) * 40, 6);
@@ -226,21 +137,77 @@ function updateUI(target) {
     }
 }
 
-function handleAttack(scene, angle) {
-    socket.emit('shoot', { id: socket.id, x: player.x, y: player.y, angle: angle, charType: player.charType });
-    createBullet(scene, player.x, player.y, angle, player.charType, true);
+// 共通パーツ
+function createWall(scene, x, y, w, h) {
+    const wall = scene.add.rectangle(x, y, w, h, 0x95a5a6);
+    walls.add(wall); scene.physics.add.existing(wall, true);
+}
+function createBush(scene, x, y, w, h, id) {
+    const bush = scene.add.rectangle(x, y, w, h, 0x27ae60, 0.5);
+    bush.bushId = id; bushes.add(bush);
+}
+function addPlayer(scene, info) {
+    player = scene.add.circle(info.x, info.y, 20, info.charType === 'shelly' ? 0x3498db : 0x2ecc71);
+    scene.physics.add.existing(player);
+    player.charType = info.charType; player.playerName = info.name; player.hp = 100; player.revealTimer = 0;
+    player.ui = scene.add.graphics().setDepth(10);
+    scene.physics.add.collider(player, walls);
+    scene.physics.add.overlap(player, enemyBullets, (p, b) => {
+        if(p.visible) { b.destroy(); socket.emit('updateHP', { id: socket.id, hp: Math.max(0, p.hp - 15), reveal: true }); }
+    });
+}
+function addOtherPlayers(scene, info) {
+    const op = scene.add.circle(info.x, info.y, 20, info.charType === 'shelly' ? 0x3498db : 0x2ecc71);
+    scene.physics.add.existing(op);
+    op.id = info.id; op.playerName = info.name; op.hp = 100; op.revealTimer = 0;
+    op.ui = scene.add.graphics().setDepth(10);
+    otherPlayers[info.id] = op;
+    scene.physics.add.overlap(bullets, op, (target, b) => { if(target.visible) b.destroy(); });
+}
+
+function setupVirtualJoysticks(scene) {
+    moveJoy = scene.add.circle(120, 480, 60, 0x000, 0.2).setDepth(150);
+    moveThumb = scene.add.circle(120, 480, 30, 0xccc, 0.5).setDepth(151);
+    shootJoy = scene.add.circle(680, 480, 60, 0x000, 0.2).setDepth(150);
+    shootThumb = scene.add.circle(680, 480, 30, 0xf00, 0.5).setDepth(151);
+    scene.input.addPointer(2);
+    scene.input.on('pointerdown', (p) => { 
+        if(p.x < 400) moveThumb.setPosition(p.x, p.y); else shootThumb.setPosition(p.x, p.y); 
+    });
+    scene.input.on('pointermove', (p) => {
+        if(p.x < 400 && p.isDown) {
+            let a = Phaser.Math.Angle.Between(moveJoy.x, moveJoy.y, p.x, p.y);
+            let d = Math.min(Phaser.Math.Distance.Between(moveJoy.x, moveJoy.y, p.x, p.y), 60);
+            moveThumb.x = moveJoy.x + Math.cos(a) * d; moveThumb.y = moveJoy.y + Math.sin(a) * d;
+            moveData = { x: Math.cos(a) * (d/60), y: Math.sin(a) * (d/60) }; isMoving = true;
+        } else if(p.x >= 400 && p.isDown) {
+            let a = Phaser.Math.Angle.Between(shootJoy.x, shootJoy.y, p.x, p.y);
+            let d = Math.min(Phaser.Math.Distance.Between(shootJoy.x, shootJoy.y, p.x, p.y), 60);
+            shootThumb.x = shootJoy.x + Math.cos(a) * d; shootThumb.y = shootJoy.y + Math.sin(a) * d;
+            shootData = { angle: a, dist: d }; isAiming = true;
+        }
+    });
+    scene.input.on('pointerup', (p) => {
+        if(p.x < 400) { moveThumb.setPosition(120, 480); isMoving = false; }
+        else {
+            if(isAiming && shootData.dist > 20 && ammo > 0 && player.visible) {
+                socket.emit('shoot', { id: socket.id, x: player.x, y: player.y, angle: shootData.angle, charType: player.charType });
+                createBullet(scene, player.x, player.y, shootData.angle, player.charType, true);
+                ammo--; startReload(scene);
+            }
+            shootThumb.setPosition(680, 480); isAiming = false;
+        }
+    });
 }
 
 function createBullet(scene, x, y, angle, charType, isMine) {
     const group = isMine ? bullets : enemyBullets;
     const color = charType === 'shelly' ? 0xf1c40f : 0x2ecc71;
-    
     if (charType === 'shelly') {
-        const spread = [ -0.2, 0, 0.2 ];
-        spread.forEach(offset => {
+        [-0.2, 0, 0.2].forEach(off => {
             const b = scene.add.circle(x, y, 4, color);
             group.add(b); scene.physics.add.existing(b);
-            scene.physics.velocityFromRotation(angle + offset, 450, b.body.velocity);
+            scene.physics.velocityFromRotation(angle + off, 450, b.body.velocity);
             scene.physics.add.collider(b, walls, () => b.destroy());
             scene.time.delayedCall(500, () => b.destroy());
         });
@@ -248,49 +215,25 @@ function createBullet(scene, x, y, angle, charType, isMine) {
         const b = scene.add.circle(x, y, 9, color);
         group.add(b); scene.physics.add.existing(b);
         scene.physics.velocityFromRotation(angle, 280, b.body.velocity);
-        scene.physics.add.collider(b, walls, () => {
-            spawnSpikeExplosion(scene, b.x, b.y, color, group);
-            b.destroy();
-        });
-        scene.time.delayedCall(700, () => {
-            if (b.active) spawnSpikeExplosion(scene, b.x, b.y, color, group);
-            b.destroy();
-        });
+        scene.physics.add.collider(b, walls, () => { spawnExp(scene, b.x, b.y, color, group); b.destroy(); });
+        scene.time.delayedCall(700, () => { if(b.active) spawnExp(scene, b.x, b.y, color, group); b.destroy(); });
     }
 }
-
-function spawnSpikeExplosion(scene, x, y, color, group) {
-    for (let i = 0; i < 6; i++) {
-        const sb = scene.add.circle(x, y, 4, color);
-        group.add(sb); scene.physics.add.existing(sb);
-        scene.physics.velocityFromRotation((Math.PI * 2 / 6) * i, 300, sb.body.velocity);
-        scene.physics.add.collider(sb, walls, () => sb.destroy());
-        scene.time.delayedCall(400, () => sb.destroy());
+function spawnExp(s, x, y, c, g) {
+    for(let i=0; i<6; i++) {
+        let sb = s.add.circle(x, y, 4, c); g.add(sb); s.physics.add.existing(sb);
+        s.physics.velocityFromRotation((Math.PI*2/6)*i, 300, sb.body.velocity);
+        s.physics.add.collider(sb, walls, () => sb.destroy()); s.time.delayedCall(400, () => sb.destroy());
     }
 }
-
-function startReload(scene) {
-    isReloading = true;
-    scene.time.addEvent({ delay: 1500, callback: () => {
-        ammo++; updateUI(player);
-        if (ammo < 3) startReload(scene); else isReloading = false;
-    }});
+function startReload(s) { if(isReloading || ammo >= 3) return; isReloading = true; s.time.addEvent({ delay: 1500, callback: () => { ammo++; isReloading = false; if(ammo < 3) startReload(s); } }); }
+function startRespawnSequence(s) {
+    if(respawnTimerInterval) clearInterval(respawnTimerInterval);
+    let c = 3; respawnText.setText(`復活まで: ${c}`);
+    respawnTimerInterval = setInterval(() => { c--; if(c > 0) respawnText.setText(`復活まで: ${c}`); else { clearInterval(respawnTimerInterval); respawnText.setText(''); socket.emit('respawnRequest'); } }, 1000);
 }
-
-function startRespawnSequence(scene) {
-    if (respawnTimerInterval) clearInterval(respawnTimerInterval);
-    let count = 3; 
-    respawnText.setText(`復活まで: ${count}`);
-    respawnTimerInterval = setInterval(() => {
-        count--; 
-        if (count > 0) respawnText.setText(`復活まで: ${count}`);
-        else {
-            clearInterval(respawnTimerInterval);
-            respawnTimerInterval = null;
-            respawnText.setText('');
-            socket.emit('respawnRequest');
-        }
-    }, 1000);
-}
-
-window.launchGame = (type) => socket.emit('joinGame', { charType: type });
+window.launchGame = (type) => {
+    const name = document.getElementById('username').value || "Guest";
+    document.getElementById('setup').style.display = 'none';
+    socket.emit('joinGame', { charType: type, name: name });
+};
