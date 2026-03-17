@@ -12,7 +12,7 @@ let socket, player, bullets, enemyBullets, walls, bushes;
 let otherPlayers = {};
 let ammo = 3, isReloading = false, respawnText, respawnTimerInterval;
 
-// ジョイスティック用
+// ジョイスティック
 let moveJoy, shootJoy, moveThumb, shootThumb;
 let isMoving = false, isAiming = false;
 let moveData = { x: 0, y: 0 }, shootData = { angle: 0, dist: 0 };
@@ -26,6 +26,7 @@ function create() {
     walls = this.physics.add.staticGroup();
     bushes = this.physics.add.staticGroup();
 
+    // マップ配置
     createWall(this, 200, 300, 40, 150);
     createWall(this, 600, 300, 40, 150);
     createBush(this, 400, 120, 240, 80, "bush_top");
@@ -35,7 +36,7 @@ function create() {
 
     setupVirtualJoysticks(this);
 
-    // プレイヤーの追加
+    // プレイヤー同期イベント
     socket.on('currentPlayers', (players) => {
         Object.keys(players).forEach((id) => {
             if (id === socket.id && !player) addPlayer(this, players[id]);
@@ -43,7 +44,6 @@ function create() {
         });
     });
 
-    // 切断通知：キャラを削除
     socket.on('playerDisconnected', (id) => {
         if (otherPlayers[id]) {
             if (otherPlayers[id].ui) otherPlayers[id].ui.destroy();
@@ -108,8 +108,6 @@ function update() {
 
 function updateUI(target) {
     target.ui.clear();
-    
-    // 名前の作成と位置
     if (!target.nameText) {
         target.nameText = target.scene.add.text(target.x, target.y - 50, target.playerName, { fontSize: '14px', fill: '#fff', stroke: '#000', strokeThickness: 2 }).setOrigin(0.5);
     }
@@ -135,34 +133,6 @@ function updateUI(target) {
             target.ui.fillRect(target.x - 20 + (i * 14), target.y - 25, 12, 4);
         }
     }
-}
-
-// 共通パーツ
-function createWall(scene, x, y, w, h) {
-    const wall = scene.add.rectangle(x, y, w, h, 0x95a5a6);
-    walls.add(wall); scene.physics.add.existing(wall, true);
-}
-function createBush(scene, x, y, w, h, id) {
-    const bush = scene.add.rectangle(x, y, w, h, 0x27ae60, 0.5);
-    bush.bushId = id; bushes.add(bush);
-}
-function addPlayer(scene, info) {
-    player = scene.add.circle(info.x, info.y, 20, info.charType === 'shelly' ? 0x3498db : 0x2ecc71);
-    scene.physics.add.existing(player);
-    player.charType = info.charType; player.playerName = info.name; player.hp = 100; player.revealTimer = 0;
-    player.ui = scene.add.graphics().setDepth(10);
-    scene.physics.add.collider(player, walls);
-    scene.physics.add.overlap(player, enemyBullets, (p, b) => {
-        if(p.visible) { b.destroy(); socket.emit('updateHP', { id: socket.id, hp: Math.max(0, p.hp - 15), reveal: true }); }
-    });
-}
-function addOtherPlayers(scene, info) {
-    const op = scene.add.circle(info.x, info.y, 20, info.charType === 'shelly' ? 0x3498db : 0x2ecc71);
-    scene.physics.add.existing(op);
-    op.id = info.id; op.playerName = info.name; op.hp = 100; op.revealTimer = 0;
-    op.ui = scene.add.graphics().setDepth(10);
-    otherPlayers[info.id] = op;
-    scene.physics.add.overlap(bullets, op, (target, b) => { if(target.visible) b.destroy(); });
 }
 
 function setupVirtualJoysticks(scene) {
@@ -200,6 +170,37 @@ function setupVirtualJoysticks(scene) {
     });
 }
 
+function createWall(scene, x, y, w, h) {
+    const wall = scene.add.rectangle(x, y, w, h, 0x95a5a6);
+    walls.add(wall); scene.physics.add.existing(wall, true);
+}
+function createBush(scene, x, y, w, h, id) {
+    const bush = scene.add.rectangle(x, y, w, h, 0x27ae60, 0.5);
+    bush.bushId = id; bushes.add(bush);
+}
+
+function addPlayer(scene, info) {
+    player = scene.add.circle(info.x, info.y, 20, info.charType === 'shelly' ? 0x3498db : 0x2ecc71);
+    scene.physics.add.existing(player);
+    // 【修正：画面外に出られないようにする】
+    player.body.setCollideWorldBounds(true);
+    player.charType = info.charType; player.playerName = info.name; player.hp = 100; player.revealTimer = 0;
+    player.ui = scene.add.graphics().setDepth(10);
+    scene.physics.add.collider(player, walls);
+    scene.physics.add.overlap(player, enemyBullets, (p, b) => {
+        if(p.visible) { b.destroy(); socket.emit('updateHP', { id: socket.id, hp: Math.max(0, p.hp - 15), reveal: true }); }
+    });
+}
+
+function addOtherPlayers(scene, info) {
+    const op = scene.add.circle(info.x, info.y, 20, info.charType === 'shelly' ? 0x3498db : 0x2ecc71);
+    scene.physics.add.existing(op);
+    op.id = info.id; op.playerName = info.name; op.hp = 100; op.revealTimer = 0;
+    op.ui = scene.add.graphics().setDepth(10);
+    otherPlayers[info.id] = op;
+    scene.physics.add.overlap(bullets, op, (target, b) => { if(target.visible) b.destroy(); });
+}
+
 function createBullet(scene, x, y, angle, charType, isMine) {
     const group = isMine ? bullets : enemyBullets;
     const color = charType === 'shelly' ? 0xf1c40f : 0x2ecc71;
@@ -219,6 +220,7 @@ function createBullet(scene, x, y, angle, charType, isMine) {
         scene.time.delayedCall(700, () => { if(b.active) spawnExp(scene, b.x, b.y, color, group); b.destroy(); });
     }
 }
+
 function spawnExp(s, x, y, c, g) {
     for(let i=0; i<6; i++) {
         let sb = s.add.circle(x, y, 4, c); g.add(sb); s.physics.add.existing(sb);
@@ -226,12 +228,15 @@ function spawnExp(s, x, y, c, g) {
         s.physics.add.collider(sb, walls, () => sb.destroy()); s.time.delayedCall(400, () => sb.destroy());
     }
 }
+
 function startReload(s) { if(isReloading || ammo >= 3) return; isReloading = true; s.time.addEvent({ delay: 1500, callback: () => { ammo++; isReloading = false; if(ammo < 3) startReload(s); } }); }
+
 function startRespawnSequence(s) {
     if(respawnTimerInterval) clearInterval(respawnTimerInterval);
     let c = 3; respawnText.setText(`復活まで: ${c}`);
     respawnTimerInterval = setInterval(() => { c--; if(c > 0) respawnText.setText(`復活まで: ${c}`); else { clearInterval(respawnTimerInterval); respawnText.setText(''); socket.emit('respawnRequest'); } }, 1000);
 }
+
 window.launchGame = (type) => {
     const name = document.getElementById('username').value || "Guest";
     document.getElementById('setup').style.display = 'none';
