@@ -63,34 +63,28 @@ function create() {
     respawnText = this.add.text(400, 300, '', { fontSize: '48px', fill: '#fff', fontStyle: 'bold' }).setOrigin(0.5).setDepth(200).setScrollFactor(0);
     setupVirtualJoysticks(this);
 
-    // 通信
     socket.on('currentPlayers', (players) => {
         Object.keys(players).forEach((id) => {
-            if (id === socket.id && !player) {
-                addPlayer(this, players[id]);
-                this.cameras.main.startFollow(player, true, 0.1, 0.1);
-            }
+            if (id === socket.id && !player) addPlayer(this, players[id]);
             else if (id !== socket.id && !otherPlayers[id]) addOtherPlayers(this, players[id]);
         });
     });
 
-    socket.on('enemyShoot', (data) => createBullet(this, data.x, data.y, data.angle, data.charType, false, data.id));
+    socket.on('enemyShoot', data => createBullet(this, data.x, data.y, data.angle, data.charType, false, data.id));
     
-    socket.on('playerMoved', (info) => {
+    socket.on('playerMoved', info => {
         if (otherPlayers[info.id]) {
             otherPlayers[info.id].setPosition(info.x, info.y);
             otherPlayers[info.id].isInBush = info.isInBush;
             otherPlayers[info.id].bushId = info.bushId;
-            updateUI(otherPlayers[info.id]);
         }
     });
 
-    socket.on('hpUpdate', (data) => {
+    socket.on('hpUpdate', data => {
         let t = (data.id === socket.id) ? player : otherPlayers[data.id];
         if (t) {
             t.hp = data.hp;
             if (data.reveal) t.revealTimer = 60;
-            updateUI(t);
             if (t.hp <= 0 && t.visible) {
                 t.setVisible(false);
                 if (data.id === socket.id) startRespawnSequence(this);
@@ -98,17 +92,17 @@ function create() {
         }
     });
 
-    socket.on('playerRespawned', (info) => {
+    socket.on('playerRespawned', info => {
         let t = (info.id === socket.id) ? player : otherPlayers[info.id];
         if (t) {
             t.hp = 100; t.setPosition(info.x, info.y); t.setVisible(true);
             if (info.id === socket.id) { respawnText.setText(''); ammo = 3; }
-            updateUI(t);
         }
     });
 
-    socket.on('playerDisconnected', (id) => {
+    socket.on('playerDisconnected', id => {
         if (otherPlayers[id]) {
+            if (otherPlayers[id].pinContainer) otherPlayers[id].pinContainer.destroy();
             otherPlayers[id].ui.destroy();
             otherPlayers[id].nameTag.destroy();
             otherPlayers[id].destroy();
@@ -116,11 +110,15 @@ function create() {
         }
     });
 
-    // ランキング更新
-    socket.on('updateRanking', (playersData) => {
+    socket.on('updateRanking', playersData => {
         const list = document.getElementById('rankingList');
         const sorted = Object.values(playersData).sort((a, b) => b.kills - a.kills);
         list.innerHTML = sorted.map(p => `<div>${p.userName}: ${p.kills}</div>`).join('');
+    });
+
+    socket.on('showPin', data => {
+        let t = (data.id === socket.id) ? player : otherPlayers[data.id];
+        if (t) displayPin(this, t, data.emoji);
     });
 }
 
@@ -139,8 +137,13 @@ function update() {
 
         socket.emit('playerMovement', { x: player.x, y: player.y, isInBush: player.isInBush, bushId: player.bushId });
         updateUI(player);
+        if (player.pinContainer) player.pinContainer.setPosition(player.x, player.y - 75);
     }
-    Object.values(otherPlayers).forEach(op => { if(op.revealTimer > 0) op.revealTimer--; updateUI(op); });
+    Object.values(otherPlayers).forEach(op => {
+        if (op.revealTimer > 0) op.revealTimer--;
+        updateUI(op);
+        if (op.pinContainer) op.pinContainer.setPosition(op.x, op.y - 75);
+    });
 }
 
 function addPlayer(s, info) {
@@ -152,14 +155,11 @@ function addPlayer(s, info) {
     player.nameTag = s.add.text(info.x, info.y - 55, info.userName, { fontSize: '14px', fill: '#ffffff', fontStyle: 'bold' }).setOrigin(0.5).setDepth(10);
     player.body.setCollideWorldBounds(true);
     s.physics.add.collider(player, walls);
-    
-    // 敵の弾が自分に当たった時
     s.physics.add.overlap(player, enemyBullets, (p, b) => {
         if(p.visible && p.hp > 0) { 
-            let dmg = 15;
-            let newHp = Math.max(0, p.hp - dmg);
+            let dmg = (b.charType === 'shelly') ? 25 : (b.charType === 'spike' ? 20 : 15);
             b.destroy();
-            socket.emit('updateHP', { id: socket.id, hp: newHp, reveal: true, attackerId: b.shooterId }); 
+            socket.emit('updateHP', { id: socket.id, hp: Math.max(0, p.hp - dmg), reveal: true, attackerId: b.shooterId }); 
         }
     });
 }
@@ -171,11 +171,9 @@ function addOtherPlayers(s, info) {
     op.ui = s.add.graphics().setDepth(10);
     op.nameTag = s.add.text(info.x, info.y - 55, info.userName, { fontSize: '14px', fill: '#ffffff' }).setOrigin(0.5).setDepth(10);
     otherPlayers[info.id] = op;
-    
-    // 自分の弾（近接含む）が敵に当たった時の回復（エドガー用）
     s.physics.add.overlap(bullets, op, (target, b) => { 
         if(target.visible && player.charType === 'edgar' && target.hp > 0) { 
-            player.hp = Math.min(100, player.hp + 5); 
+            player.hp = Math.min(100, player.hp + 3); // 回復量を3に下方修正
             socket.emit('updateHP', { id: socket.id, hp: player.hp, reveal: false });
         }
     });
@@ -208,20 +206,21 @@ function createBullet(s, x, y, angle, charType, isMine, shooterId) {
     let group = isMine ? bullets : enemyBullets;
     if (charType === 'shelly') {
         [-0.2, 0, 0.2].forEach(off => {
-            let b = s.add.circle(x, y, 4, 0xf1c40f); b.shooterId = shooterId;
+            let b = s.add.circle(x, y, 5, 0xf1c40f); b.charType = charType; b.shooterId = shooterId;
             group.add(b); s.physics.add.existing(b);
             s.physics.velocityFromRotation(angle + off, 450, b.body.velocity);
             s.physics.add.collider(b, walls, () => b.destroy());
             s.time.delayedCall(450, () => { if(b.active) b.destroy(); });
         });
     } else if (charType === 'spike') {
-        let b = s.add.circle(x, y, 9, 0x2ecc71); b.shooterId = shooterId;
+        let b = s.add.circle(x, y, 9, 0x2ecc71); b.charType = charType; b.shooterId = shooterId;
         group.add(b); s.physics.add.existing(b);
         s.physics.velocityFromRotation(angle, 280, b.body.velocity);
         s.physics.add.collider(b, walls, () => { explode(s, b.x, b.y, 0x2ecc71, group, shooterId); b.destroy(); });
         s.time.delayedCall(700, () => { if (b.active) { explode(s, b.x, b.y, 0x2ecc71, group, shooterId); b.destroy(); } });
     } else if (charType === 'edgar') {
-        let b = s.add.rectangle(x + Math.cos(angle)*35, y + Math.sin(angle)*35, 45, 45, 0xffffff, 0.4); b.shooterId = shooterId;
+        let b = s.add.rectangle(x + Math.cos(angle)*35, y + Math.sin(angle)*35, 45, 45, 0xffffff, 0.4);
+        b.charType = charType; b.shooterId = shooterId;
         group.add(b); s.physics.add.existing(b);
         s.physics.add.collider(b, walls, () => b.destroy());
         s.time.delayedCall(120, () => { if(b.active) b.destroy(); });
@@ -230,7 +229,7 @@ function createBullet(s, x, y, angle, charType, isMine, shooterId) {
 
 function explode(s, x, y, color, group, shooterId) {
     for (let i = 0; i < 6; i++) {
-        let sb = s.add.circle(x, y, 4, color); sb.shooterId = shooterId;
+        let sb = s.add.circle(x, y, 5, color); sb.charType = 'spike'; sb.shooterId = shooterId;
         group.add(sb); s.physics.add.existing(sb);
         s.physics.velocityFromRotation((Math.PI * 2 / 6) * i, 300, sb.body.velocity);
         s.physics.add.collider(sb, walls, () => sb.destroy());
@@ -238,8 +237,18 @@ function explode(s, x, y, color, group, shooterId) {
     }
 }
 
+function displayPin(scene, target, emoji) {
+    if (target.pinContainer) target.pinContainer.destroy();
+    let bg = scene.add.graphics();
+    bg.fillStyle(0xffffff, 0.9);
+    bg.fillRoundedRect(-20, -20, 40, 40, 10);
+    let txt = scene.add.text(0, 0, emoji, { fontSize: '24px' }).setOrigin(0.5);
+    target.pinContainer = scene.add.container(target.x, target.y - 75, [bg, txt]).setDepth(100);
+    scene.time.delayedCall(2000, () => { if (target.pinContainer) target.pinContainer.destroy(); });
+}
+
 function handleAttack(s, angle) {
-    socket.emit('shoot', { id: socket.id, x: player.x, y: player.y, angle: angle, charType: player.charType });
+    socket.emit('shoot', { id: socket.id, x: player.x, y: player.y, angle, charType: player.charType });
     createBullet(s, player.x, player.y, angle, player.charType, true, socket.id);
 }
 
@@ -284,11 +293,10 @@ function startReload(s) {
     s.time.addEvent({ delay: 1200, callback: () => { ammo++; updateUI(player); if (ammo < 3) startReload(s); else isReloading = false; }});
 }
 function startRespawnSequence(s) {
-    if (respawnTimerInterval) clearInterval(respawnTimerInterval);
     let count = 3; respawnText.setText(`復活まで: ${count}`);
     respawnTimerInterval = setInterval(() => {
         count--; if (count > 0) respawnText.setText(`復活まで: ${count}`);
-        else { clearInterval(respawnTimerInterval); respawnTimerInterval = null; respawnText.setText(''); socket.emit('respawnRequest'); }
+        else { clearInterval(respawnTimerInterval); respawnText.setText(''); socket.emit('respawnRequest'); }
     }, 1000);
 }
 window.launchGame = type => {
@@ -296,3 +304,4 @@ window.launchGame = type => {
     document.getElementById('overlay').style.display = 'none';
     socket.emit('joinGame', { charType: type, userName: name });
 };
+window.sendPin = emoji => { if (socket && player && player.visible) socket.emit('sendPin', { id: socket.id, emoji }); };
