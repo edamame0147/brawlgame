@@ -66,9 +66,7 @@ function create() {
             if (id === socket.id && !player) {
                 addPlayer(this, ps[id]);
                 this.cameras.main.startFollow(player, true, 0.1, 0.1);
-            } else if (id !== socket.id && !otherPlayers[id]) {
-                addOtherPlayers(this, ps[id]);
-            }
+            } else if (id !== socket.id && !otherPlayers[id]) addOtherPlayers(this, ps[id]);
         });
     });
 
@@ -91,19 +89,7 @@ function create() {
         const list = document.getElementById('rankingList');
         if(list) list.innerHTML = Object.values(ps).sort((a, b) => b.kills - a.kills).map(p => `<div>${p.userName}: ${p.kills}</div>`).join('');
     });
-    socket.on('showPin', data => { 
-        let t = (data.id === socket.id) ? player : otherPlayers[data.id]; 
-        if(t && t.active) displayPin(this, t, data.emoji); 
-    });
-    socket.on('playerDisconnected', id => { 
-        if(otherPlayers[id]) { 
-            if(otherPlayers[id].ui) otherPlayers[id].ui.destroy();
-            if(otherPlayers[id].nameTag) otherPlayers[id].nameTag.destroy();
-            if(otherPlayers[id].pinGroup) otherPlayers[id].pinGroup.destroy();
-            otherPlayers[id].destroy(); 
-            delete otherPlayers[id]; 
-        }
-    });
+    socket.on('showPin', data => { let t = (data.id === socket.id) ? player : otherPlayers[data.id]; if(t && t.active) displayPin(this, t, data.emoji); });
 }
 
 function update() {
@@ -147,7 +133,7 @@ function drawAimGuide(charType, angle, isUlt, power) {
         aimGuide.fillCircle(targetX, targetY, 45);
         aimGuide.lineStyle(1, 0xffffff, 0.2);
         aimGuide.lineBetween(player.x, player.y, targetX, targetY);
-    } else if (charType === 'shelly' || charType === 'frank' || (charType === 'spike' && isUlt)) {
+    } else if (charType === 'shelly' || charType === 'frank') {
         aimGuide.beginPath(); aimGuide.moveTo(player.x, player.y);
         aimGuide.arc(player.x, player.y, maxRange, angle - 0.3, angle + 0.3);
         aimGuide.closePath(); aimGuide.fillPath(); aimGuide.strokePath();
@@ -166,7 +152,7 @@ function addPlayer(s, info) {
     player.nameTag = s.add.text(info.x, info.y - 55, info.userName, { fontSize: '14px', fill: '#ffffff', fontStyle: 'bold' }).setOrigin(0.5).setDepth(10);
     s.physics.add.collider(player, walls);
     s.physics.add.overlap(player, enemyBullets, (p, b) => {
-        if(p.visible && p.hp > 0) {
+        if(p.visible && p.hp > 0 && b.active) {
             let d = b.isUlt ? { shelly: 35, spike: 15, edgar: 15, frank: 40 }[b.charType] : { shelly: 25, spike: 20, edgar: 15, frank: 35 }[b.charType];
             b.destroy();
             socket.emit('updateHP', { id: socket.id, hp: Math.max(0, p.hp - d), attackerId: b.shooterId, stun: b.isFrankUlt });
@@ -180,11 +166,13 @@ function addOtherPlayers(s, info) {
     s.physics.add.existing(op); op.id = info.id; op.hp = 100; op.ui = s.add.graphics().setDepth(10);
     op.nameTag = s.add.text(info.x, info.y - 55, info.userName, { fontSize: '14px', fill: '#ffffff' }).setOrigin(0.5).setDepth(10);
     otherPlayers[info.id] = op;
+    // 自分の攻撃が敵に当たった時のゲージ上昇（一回のみ）
     s.physics.add.overlap(bullets, op, (target, b) => {
-        if (target.visible && b.shooterId === socket.id) {
+        if (target.visible && b.active && b.shooterId === socket.id) {
             let gain = b.isUlt ? 0 : { shelly: 12, spike: 20, edgar: 15, frank: 25 }[player.charType];
             ultGage = Math.min(100, ultGage + gain);
             if (player.charType === 'edgar') player.hp = Math.min(100, player.hp + 3);
+            b.destroy(); // 当たったら弾を消すことで、ゲージが1回分だけ増えるようにする
         }
     });
 }
@@ -202,13 +190,18 @@ function createBullet(s, x, y, angle, charType, isMine, shooterId, isUlt, power 
     };
 
     if (isUlt) {
-        let range = 280 * (power || 1);
+        let range = 280 * power;
         if (charType === 'shelly') { for(let i=-4; i<=4; i++) bConfig(x, y, angle + i*0.15, 600, 400, 7, 0xffff00, false); }
         else if (charType === 'spike') {
             let tx = x + Math.cos(angle) * range, ty = y + Math.sin(angle) * range;
             let zone = s.add.circle(tx, ty, 100, 0x2ecc71, 0.3).setDepth(1);
             s.physics.add.existing(zone);
-            s.time.addEvent({ delay: 500, repeat: 10, callback: () => { if(player && s.physics.overlap(player, zone)) socket.emit('updateHP', { id: socket.id, hp: Math.max(0, player.hp - 5), attackerId: shooterId }); }});
+            s.time.addEvent({ delay: 500, repeat: 10, callback: () => { 
+                // スパイク本人は自分のウルトでダメージを受けない
+                if(player && shooterId !== socket.id && s.physics.overlap(player, zone)) {
+                    socket.emit('updateHP', { id: socket.id, hp: Math.max(0, player.hp - 5), attackerId: shooterId });
+                }
+            }});
             s.time.delayedCall(5000, () => { if(zone.active) zone.destroy(); });
         } else if (charType === 'edgar') {
             if(isMine && player) { 
