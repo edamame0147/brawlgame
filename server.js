@@ -12,7 +12,7 @@ let players = {};
 io.on('connection', (socket) => {
     socket.on('joinGame', (data) => {
         players[socket.id] = {
-            x: 1000, y: 1000, // マップ中央付近にスポーン
+            x: 1250, y: 1250, // マップ中央付近
             id: socket.id, charType: data.charType,
             hp: 100, isInBush: false, bushId: null
         };
@@ -40,9 +40,8 @@ io.on('connection', (socket) => {
     socket.on('respawnRequest', () => {
         if (players[socket.id]) {
             players[socket.id].hp = 100;
-            // 2000x2000のマップ内のランダム位置
-            players[socket.id].x = Math.floor(Math.random() * 1800) + 100;
-            players[socket.id].y = Math.floor(Math.random() * 1800) + 100;
+            players[socket.id].x = Math.floor(Math.random() * 2000) + 250;
+            players[socket.id].y = Math.floor(Math.random() * 2000) + 250;
             io.emit('playerRespawned', players[socket.id]);
         }
     });
