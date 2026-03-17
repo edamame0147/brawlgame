@@ -11,11 +11,9 @@ let players = {};
 
 io.on('connection', (socket) => {
     socket.on('joinGame', (data) => {
-        // プレイヤー情報に name を追加
         players[socket.id] = {
-            x: 400, y: 300, id: socket.id,
-            charType: data.charType,
-            name: data.name || "Guest",
+            x: 1000, y: 1000, // マップ中央付近にスポーン
+            id: socket.id, charType: data.charType,
             hp: 100, isInBush: false, bushId: null
         };
         io.emit('currentPlayers', players);
@@ -42,20 +40,17 @@ io.on('connection', (socket) => {
     socket.on('respawnRequest', () => {
         if (players[socket.id]) {
             players[socket.id].hp = 100;
-            players[socket.id].x = Math.floor(Math.random() * 700) + 50;
-            players[socket.id].y = Math.floor(Math.random() * 500) + 50;
+            // 2000x2000のマップ内のランダム位置
+            players[socket.id].x = Math.floor(Math.random() * 1800) + 100;
+            players[socket.id].y = Math.floor(Math.random() * 1800) + 100;
             io.emit('playerRespawned', players[socket.id]);
         }
     });
 
-    // タブを閉じた時の処理
     socket.on('disconnect', () => {
-        if (players[socket.id]) {
-            delete players[socket.id];
-            io.emit('playerDisconnected', socket.id);
-        }
+        delete players[socket.id];
+        io.emit('playerDisconnected', socket.id);
     });
 });
 
-const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+server.listen(3000, () => console.log(`Server running on port 3000`));
