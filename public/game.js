@@ -25,7 +25,8 @@ let otherPlayers = {};
 let ammo = 3, isReloading = false, ultGage = 0, isStunned = false, isActionLocked = false, respawnText;
 let moveJoy, shootJoy, moveThumb, shootThumb, ultBtn, ultGageGraphics, ultGageMask;
 let isMoving = false, isAiming = false, isUltAiming = false, moveData = { x: 0, y: 0 }, shootData = { angle: 0, dist: 0, power: 0 };
-let lastMoveAngle = 0; // オートエイム用：移動方向を保持
+let lastMoveAngle = 0;
+let touchStartTime = 0; // オートエイム判定用
 
 function preload() {}
 
@@ -85,7 +86,7 @@ function create() {
         let t = (info.id === socket.id) ? player : otherPlayers[info.id];
         if (t) { t.hp = 100; t.setPosition(info.x, info.y); t.setVisible(true); if(info.id === socket.id) { respawnText.setText(''); ammo = 3; ultGage = 0; isStunned = false; isActionLocked = false; }}
     });
-    socket.on('playerDisconnected', id => { if(otherPlayers[id]) { if(otherPlayers[id].ui) otherPlayers[id].ui.destroy(); if(otherPlayers[id].nameTag) otherPlayers[id].nameTag.destroy(); otherPlayers[id].destroy(); delete otherPlayers[id]; }});
+    socket.on('playerDisconnected', id => { if(otherPlayers[id]) { if(otherPlayers[id].ui) otherPlayers[id].ui.destroy(); if(otherPlayers[id].nameTag) otherPlayers[id].nameTag.destroy(); if(otherPlayers[id].pinGroup) otherPlayers[id].pinGroup.destroy(); otherPlayers[id].destroy(); delete otherPlayers[id]; }});
     socket.on('updateRanking', ps => { const l = document.getElementById('rankingList'); if(l) l.innerHTML = Object.values(ps).sort((a,b)=>b.kills-a.kills).map(p=>`<div>${p.userName}: ${p.kills}</div>`).join(''); });
     socket.on('showPin', d => { let t = (d.id===socket.id)?player:otherPlayers[d.id]; if(t&&t.active) displayPin(this, t, d.emoji); });
 }
@@ -167,9 +168,6 @@ function addOtherPlayers(s, info) {
     });
 }
 
-// ---------------------------------------------------------
-// フランケンの扇形アニメーション生成
-// ---------------------------------------------------------
 function createFrankEffect(s, x, y, angle, isUlt) {
     let effect = s.add.graphics().setDepth(4);
     let duration = isUlt ? 450 : 350;
@@ -182,15 +180,10 @@ function createFrankEffect(s, x, y, angle, isUlt) {
         alpha: 0,
         duration: duration,
         onUpdate: (tween, target) => {
-            effect.clear();
-            effect.lineStyle(4, color, target.alpha);
-            effect.fillStyle(color, target.alpha * 0.3);
-            effect.beginPath();
-            effect.moveTo(x, y);
+            effect.clear(); effect.lineStyle(4, color, target.alpha); effect.fillStyle(color, target.alpha * 0.3);
+            effect.beginPath(); effect.moveTo(x, y);
             effect.arc(x, y, target.r, angle - 0.35, angle + 0.35);
-            effect.closePath();
-            effect.fillPath();
-            effect.strokePath();
+            effect.closePath(); effect.fillPath(); effect.strokePath();
         },
         onComplete: () => effect.destroy()
     });
@@ -198,7 +191,6 @@ function createFrankEffect(s, x, y, angle, isUlt) {
 
 function createBullet(s, x, y, angle, charType, isMine, shooterId, isUlt, power = 1.0) {
     if (charType === 'frank') createFrankEffect(s, x, y, angle, isUlt);
-
     let group = isMine ? bullets : enemyBullets;
     let bConfig = (sx, sy, ang, spd, life, size, col, isRect) => {
         let b = isRect ? s.add.rectangle(sx, sy, size, size, col) : s.add.circle(sx, sy, size, col);
@@ -220,9 +212,23 @@ function createBullet(s, x, y, angle, charType, isMine, shooterId, isUlt, power 
             s.time.addEvent({ delay: 500, repeat: 10, callback: () => { if(player && shooterId !== socket.id && s.physics.overlap(player, zone)) socket.emit('updateHP', { id: socket.id, hp: Math.max(0, player.hp - 5), attackerId: shooterId }); }});
             s.time.delayedCall(5000, () => { if(zone.active) zone.destroy(); });
         } else if (charType === 'edgar') { if(isMine && player) { isActionLocked = true; s.tweens.add({ targets: player, x: x + Math.cos(angle) * range, y: y + Math.sin(angle) * range, duration: 600, ease: 'Power2', onComplete: () => isActionLocked = false }); } }
-        else if (charType === 'frank') { let b = bConfig(x, y, angle, 400, 400, 80, 0xffff00, true); b.isFrankUlt = true; b.setVisible(false); }
+        else if (charType === 'frank') { 
+            // 扇形の先まで判定が出るように、複数の判定用弾を飛ばす
+            for(let i=0; i<3; i++) {
+                let dist = 100 + i*90;
+                let b = bConfig(x + Math.cos(angle)*dist, y + Math.sin(angle)*dist, angle, 0, 400, 90, 0xffff00, true);
+                b.isFrankUlt = true; b.setVisible(false);
+            }
+        }
     } else {
-        if (charType === 'frank') { for(let i=-2; i<=2; i++) { let b = bConfig(x, y, angle+i*0.2, 400, 350, 25, 0x795548, true); b.setVisible(false); } }
+        if (charType === 'frank') { 
+            // 扇形の先まで判定が出るように調整
+            for(let i=0; i<2; i++) {
+                let dist = 80 + i*80;
+                let b = bConfig(x + Math.cos(angle)*dist, y + Math.sin(angle)*dist, angle, 0, 350, 70, 0x795548, true); 
+                b.setVisible(false); 
+            }
+        }
         else if (charType === 'shelly') { for(let i=-1; i<=1; i++) bConfig(x, y, angle+i*0.2, 450, 450, 5, 0xf1c40f, false); }
         else if (charType === 'spike') { bConfig(x, y, angle, 280, 700, 10, 0x2ecc71, false); }
         else if (charType === 'edgar') { bConfig(x + Math.cos(angle)*35, y + Math.sin(angle)*35, angle, 0, 120, 45, 0xffffff, true); }
@@ -239,26 +245,15 @@ function explodeSpike(s, x, y, group, shooterId) {
     }
 }
 
-// ---------------------------------------------------------
-// オートエイム用：ターゲット取得
-// ---------------------------------------------------------
 function getAutoAimAngle(charType, isUlt) {
-    let maxRange = isUlt ? 350 : { shelly: 250, spike: 300, edgar: 150, frank: 220 }[charType];
-    let nearestEnemy = null;
-    let minDist = Infinity;
-
+    let maxRange = isUlt ? 400 : 300;
+    let nearestEnemy = null, minDist = Infinity;
     Object.values(otherPlayers).forEach(op => {
-        if (!op.visible || op.hp <= 0) return; // 隠れている・死んでいる敵は無視
+        if (!op.visible || op.hp <= 0) return;
         let d = Phaser.Math.Distance.Between(player.x, player.y, op.x, op.y);
-        if (d < maxRange && d < minDist) {
-            minDist = d; nearestEnemy = op;
-        }
+        if (d < maxRange && d < minDist) { minDist = d; nearestEnemy = op; }
     });
-
-    if (nearestEnemy) {
-        return Phaser.Math.Angle.Between(player.x, player.y, nearestEnemy.x, nearestEnemy.y);
-    }
-    return lastMoveAngle; // 敵がいない場合は移動方向
+    return nearestEnemy ? Phaser.Math.Angle.Between(player.x, player.y, nearestEnemy.x, nearestEnemy.y) : lastMoveAngle;
 }
 
 function setupVirtualJoysticks(scene) {
@@ -273,6 +268,7 @@ function setupVirtualJoysticks(scene) {
 
     scene.input.addPointer(2);
     scene.input.on('pointerdown', p => { 
+        touchStartTime = Date.now();
         if(Phaser.Math.Distance.Between(p.x, p.y, ultBtn.x, ultBtn.y) < 45 && ultGage >= 100) { isUltAiming = true; shootData.dist = 0; } 
         else if(p.x > 400) { isAiming = true; shootData.dist = 0; }
     });
@@ -291,10 +287,12 @@ function setupVirtualJoysticks(scene) {
     scene.input.on('pointerup', p => {
         if (p.x < 400) { moveThumb.setPosition(130, 470); isMoving = false; }
         else {
+            let duration = Date.now() - touchStartTime;
             let finalAngle = shootData.angle;
             let finalPower = shootData.power;
-            // オートエイム判定（ドラッグ距離が短い場合）
-            if (shootData.dist < 20) {
+            
+            // オートエイム判定：0.5秒以内かつ、あまりドラッグしていない場合
+            if (duration < 500 && shootData.dist < 30) {
                 finalAngle = getAutoAimAngle(player.charType, isUltAiming);
                 finalPower = 1.0;
             }
@@ -316,8 +314,11 @@ function setupVirtualJoysticks(scene) {
 
 function updateUI(t) {
     if (!t || !t.active) return;
-    t.ui.clear(); if (!t.visible) { t.nameTag.setVisible(false); return; }
+    t.ui.clear(); if (!t.visible) { t.nameTag.setVisible(false); if(t.pinGroup) t.pinGroup.setVisible(false); return; }
     t.nameTag.setVisible(true).setPosition(t.x, t.y - 55);
+    // ピンズの位置を追従させる
+    if(t.pinGroup) { t.pinGroup.setVisible(true); t.pinGroup.setPosition(t.x, t.y - 100); }
+    
     t.ui.fillStyle(0x000000, 0.5); t.ui.fillRect(t.x-21, t.y-36, 42, 8);
     t.ui.fillStyle(0xc0392b); t.ui.fillRect(t.x-20, t.y-35, 40, 6);
     t.ui.fillStyle(0x2ecc71); t.ui.fillRect(t.x-20, t.y-35, (t.hp/100)*40, 6);
@@ -337,6 +338,7 @@ function startRespawnSequence(s) {
     let c = 3; if(respawnText) respawnText.setText(`復活まで: ${c}`);
     let i = setInterval(() => { c--; if(c>0) { if(respawnText) respawnText.setText(`復活まで: ${c}`); } else { clearInterval(i); if(respawnText) respawnText.setText(''); socket.emit('respawnRequest'); } }, 1000);
 }
+
 function displayPin(scene, target, emoji) {
     if (!target || !target.active) return;
     if (target.pinGroup) target.pinGroup.destroy();
