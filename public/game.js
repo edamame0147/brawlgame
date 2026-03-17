@@ -21,9 +21,10 @@ const MAP_DESIGN = [
 
 const config = {
     type: Phaser.AUTO,
-    width: 800, height: 600,
+    width: 800, 
+    height: 600,
     backgroundColor: '#34495e',
-    scale: { mode: Phaser.Scale.FIT, autoCenter: Phaser.Scale.CENTER_BOTH },
+    parent: 'game-container',
     physics: { default: 'arcade', arcade: { gravity: { y: 0 } } },
     scene: { preload, create, update }
 };
@@ -63,9 +64,13 @@ function create() {
     respawnText = this.add.text(400, 300, '', { fontSize: '48px', fill: '#fff', fontStyle: 'bold' }).setOrigin(0.5).setDepth(200).setScrollFactor(0);
     setupVirtualJoysticks(this);
 
+    // Socket Events
     socket.on('currentPlayers', (players) => {
         Object.keys(players).forEach((id) => {
-            if (id === socket.id && !player) addPlayer(this, players[id]);
+            if (id === socket.id && !player) {
+                addPlayer(this, players[id]);
+                this.cameras.main.startFollow(player, true, 0.1, 0.1);
+            }
             else if (id !== socket.id && !otherPlayers[id]) addOtherPlayers(this, players[id]);
         });
     });
@@ -173,7 +178,7 @@ function addOtherPlayers(s, info) {
     otherPlayers[info.id] = op;
     s.physics.add.overlap(bullets, op, (target, b) => { 
         if(target.visible && player.charType === 'edgar' && target.hp > 0) { 
-            player.hp = Math.min(100, player.hp + 3); // 回復量を3に下方修正
+            player.hp = Math.min(100, player.hp + 3);
             socket.emit('updateHP', { id: socket.id, hp: player.hp, reveal: false });
         }
     });
