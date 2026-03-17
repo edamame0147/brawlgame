@@ -28,7 +28,6 @@ io.on('connection', (socket) => {
     });
 
     socket.on('shoot', (data) => { socket.broadcast.emit('enemyShoot', data); });
-
     socket.on('sendPin', (data) => { io.emit('showPin', data); });
 
     socket.on('updateHP', (data) => {
@@ -60,4 +59,4 @@ io.on('connection', (socket) => {
     });
 });
 
-server.listen(3000, () => console.log('Server running on 3000'));
+server.listen(3000, () => console.log('Server running on port 3000'));
