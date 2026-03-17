@@ -1,4 +1,25 @@
-const MAP_SIZE = 1500; // マップを狭く調整
+const MAP_SIZE = 1200; // さらに狭くして激戦に
+const TILE_SIZE = 60; 
+
+// 点対称のマップ設計図 (1=壁, 2=草)
+const MAP_DESIGN = [
+    [1,1,1,0,0,0,0,1,0,0,0,0,1,1,1],
+    [1,0,0,0,2,2,0,1,0,2,2,0,0,0,1],
+    [1,0,1,0,2,2,0,0,0,2,2,0,1,0,1],
+    [0,0,1,0,0,0,1,1,1,0,0,0,1,0,0],
+    [0,2,2,0,0,0,0,0,0,0,0,0,2,2,0],
+    [0,2,2,0,1,1,0,1,0,1,1,0,2,2,0],
+    [0,0,0,0,1,0,0,0,0,0,1,0,0,0,0],
+    [1,1,0,0,0,0,2,2,2,0,0,0,0,1,1], // 中央
+    [0,0,0,0,1,0,0,0,0,0,1,0,0,0,0],
+    [0,2,2,0,1,1,0,1,0,1,1,0,2,2,0],
+    [0,2,2,0,0,0,0,0,0,0,0,0,2,2,0],
+    [0,0,1,0,0,0,1,1,1,0,0,0,1,0,0],
+    [1,0,1,0,2,2,0,0,0,2,2,0,1,0,1],
+    [1,0,0,0,2,2,0,1,0,2,2,0,0,0,1],
+    [1,1,1,0,0,0,0,1,0,0,0,0,1,1,1],
+];
+
 const config = {
     type: Phaser.AUTO,
     width: 800, height: 600,
@@ -20,32 +41,25 @@ function preload() {}
 function create() {
     socket = io();
     this.physics.world.setBounds(0, 0, MAP_SIZE, MAP_SIZE);
+    this.cameras.main.setBounds(0, 0, MAP_SIZE, MAP_SIZE);
 
-    // 背景グリッド
-    let grid = this.add.graphics();
-    grid.lineStyle(2, 0x2c3e50, 0.4);
-    for (let i = 0; i <= MAP_SIZE; i += 100) {
-        grid.moveTo(i, 0); grid.lineTo(i, MAP_SIZE);
-        grid.moveTo(0, i); grid.lineTo(MAP_SIZE, i);
-    }
-    grid.strokePath();
+    // グリッド背景
+    this.add.grid(MAP_SIZE/2, MAP_SIZE/2, MAP_SIZE, MAP_SIZE, TILE_SIZE, TILE_SIZE, 0x34495e).setOutlineStyle(0x2c3e50);
 
     bullets = this.physics.add.group();
     enemyBullets = this.physics.add.group();
     walls = this.physics.add.staticGroup();
     bushes = this.physics.add.staticGroup();
 
-    // 外壁
-    createWall(this, MAP_SIZE/2, 5, MAP_SIZE, 10);
-    createWall(this, MAP_SIZE/2, MAP_SIZE-5, MAP_SIZE, 10);
-    createWall(this, 5, MAP_SIZE/2, 10, MAP_SIZE);
-    createWall(this, MAP_SIZE-5, MAP_SIZE/2, 10, MAP_SIZE);
-
-    // ステージ生成（狭いので少し控えめに）
-    for (let x = 400; x < MAP_SIZE; x += 400) {
-        for (let y = 400; y < MAP_SIZE; y += 400) {
-            createWall(this, x, y, 100, 40);
-            createBush(this, x, y + 80, 200, 80, `b_${x}_${y}`);
+    // マップ構築
+    const offsetX = (MAP_SIZE - (MAP_DESIGN[0].length * TILE_SIZE)) / 2;
+    const offsetY = (MAP_SIZE - (MAP_DESIGN.length * TILE_SIZE)) / 2;
+    for (let r = 0; r < MAP_DESIGN.length; r++) {
+        for (let c = 0; c < MAP_DESIGN[r].length; c++) {
+            let x = offsetX + c * TILE_SIZE + TILE_SIZE/2;
+            let y = offsetY + r * TILE_SIZE + TILE_SIZE/2;
+            if (MAP_DESIGN[r][c] === 1) createWall(this, x, y, TILE_SIZE-4, TILE_SIZE-4);
+            if (MAP_DESIGN[r][c] === 2) createBush(this, x, y, TILE_SIZE, TILE_SIZE, `bush_${r}_${c}`);
         }
     }
 
@@ -57,14 +71,12 @@ function create() {
             if (id === socket.id && !player) {
                 addPlayer(this, players[id]);
                 this.cameras.main.startFollow(player, true, 0.1, 0.1);
-                this.cameras.main.setBounds(0, 0, MAP_SIZE, MAP_SIZE);
             }
             else if (id !== socket.id && !otherPlayers[id]) addOtherPlayers(this, players[id]);
         });
     });
 
     socket.on('enemyShoot', (data) => createBullet(this, data.x, data.y, data.angle, data.charType, false));
-
     socket.on('playerMoved', (info) => {
         if (otherPlayers[info.id]) {
             otherPlayers[info.id].setPosition(info.x, info.y);
@@ -109,8 +121,7 @@ function create() {
 function update() {
     if (player && player.visible) {
         player.body.setVelocity(0);
-        // エドガーは移動速度が少し速い
-        let speed = (player.charType === 'edgar') ? 280 : 230;
+        let speed = (player.charType === 'edgar') ? 270 : 220;
         if (isMoving) player.body.setVelocity(moveData.x * speed, moveData.y * speed);
 
         let bushId = null;
@@ -126,6 +137,35 @@ function update() {
     Object.values(otherPlayers).forEach(op => { if(op.revealTimer > 0) op.revealTimer--; updateUI(op); });
 }
 
+function addPlayer(s, info) {
+    let color = (info.charType === 'shelly') ? 0x3498db : (info.charType === 'spike' ? 0x2ecc71 : 0x9b59b6);
+    player = s.add.circle(info.x, info.y, 20, color);
+    s.physics.add.existing(player);
+    player.charType = info.charType; player.hp = 100; player.revealTimer = 0;
+    player.ui = s.add.graphics().setDepth(10);
+    player.nameTag = s.add.text(info.x, info.y - 55, info.userName, { fontSize: '14px', fill: '#ffffff', fontStyle: 'bold' }).setOrigin(0.5).setDepth(10);
+    player.body.setCollideWorldBounds(true);
+    s.physics.add.collider(player, walls);
+    s.physics.add.overlap(player, enemyBullets, (p, b) => {
+        if(p.visible) { b.destroy(); socket.emit('updateHP', { id: socket.id, hp: Math.max(0, p.hp - 15), reveal: true }); }
+    });
+}
+
+function addOtherPlayers(s, info) {
+    let color = (info.charType === 'shelly') ? 0x3498db : (info.charType === 'spike' ? 0x2ecc71 : 0x9b59b6);
+    let op = s.add.circle(info.x, info.y, 20, color);
+    s.physics.add.existing(op); op.id = info.id; op.hp = 100; op.revealTimer = 0;
+    op.ui = s.add.graphics().setDepth(10);
+    op.nameTag = s.add.text(info.x, info.y - 55, info.userName, { fontSize: '14px', fill: '#ffffff' }).setOrigin(0.5).setDepth(10);
+    otherPlayers[info.id] = op;
+    s.physics.add.overlap(bullets, op, (t, b) => { 
+        if(t.visible && player.charType === 'edgar') { 
+            player.hp = Math.min(100, player.hp + 5); 
+            socket.emit('updateHP', { id: socket.id, hp: player.hp, reveal: false });
+        }
+    });
+}
+
 function updateUI(target) {
     target.ui.clear();
     let vis = true;
@@ -135,14 +175,12 @@ function updateUI(target) {
         if (target.revealTimer > 0) vis = true;
         if (Phaser.Math.Distance.Between(player.x, player.y, target.x, target.y) < 80) vis = true;
     }
-    target.setVisible(vis);
-    target.nameTag.setVisible(vis);
+    target.setVisible(vis); target.nameTag.setVisible(vis);
     if (!vis || !target.visible) return;
 
     target.nameTag.setPosition(target.x, target.y - 55);
     target.ui.fillStyle(0xc0392b); target.ui.fillRect(target.x - 20, target.y - 35, 40, 6);
     target.ui.fillStyle(0x2ecc71); target.ui.fillRect(target.x - 20, target.y - 35, (target.hp / 100) * 40, 6);
-    
     if (target === player) {
         for (let i = 0; i < 3; i++) {
             target.ui.fillStyle(i < ammo ? 0xf1c40f : 0x555555);
@@ -153,71 +191,34 @@ function updateUI(target) {
 
 function createBullet(s, x, y, angle, charType, isMine) {
     let group = isMine ? bullets : enemyBullets;
-    
     if (charType === 'shelly') {
-        let color = 0xf1c40f;
         [-0.2, 0, 0.2].forEach(off => {
-            let b = s.add.circle(x, y, 4, color); group.add(b); s.physics.add.existing(b);
+            let b = s.add.circle(x, y, 4, 0xf1c40f); group.add(b); s.physics.add.existing(b);
             s.physics.velocityFromRotation(angle + off, 450, b.body.velocity);
-            s.time.delayedCall(500, () => b.destroy());
+            s.time.delayedCall(450, () => b.destroy());
         });
     } else if (charType === 'spike') {
-        let color = 0x2ecc71;
-        let b = s.add.circle(x, y, 9, color); group.add(b); s.physics.add.existing(b);
+        let b = s.add.circle(x, y, 9, 0x2ecc71); group.add(b); s.physics.add.existing(b);
         s.physics.velocityFromRotation(angle, 280, b.body.velocity);
-        s.time.delayedCall(700, () => { if (b.active) explode(s, b.x, b.y, color, group); b.destroy(); });
+        s.time.delayedCall(700, () => { if (b.active) explode(s, b.x, b.y, 0x2ecc71, group); b.destroy(); });
     } else if (charType === 'edgar') {
-        // エドガー：超短距離・高速パンチ
-        let b = s.add.rectangle(x + Math.cos(angle)*30, y + Math.sin(angle)*30, 40, 40, 0xffffff, 0.5);
+        let b = s.add.rectangle(x + Math.cos(angle)*35, y + Math.sin(angle)*35, 45, 45, 0xffffff, 0.4);
         group.add(b); s.physics.add.existing(b);
-        s.time.delayedCall(150, () => b.destroy());
+        s.time.delayedCall(120, () => b.destroy());
+    }
+}
+
+function explode(s, x, y, color, group) {
+    for (let i = 0; i < 6; i++) {
+        let sb = s.add.circle(x, y, 4, color); group.add(sb); s.physics.add.existing(sb);
+        s.physics.velocityFromRotation((Math.PI * 2 / 6) * i, 300, sb.body.velocity);
+        s.time.delayedCall(350, () => sb.destroy());
     }
 }
 
 function handleAttack(s, angle) {
     socket.emit('shoot', { id: socket.id, x: player.x, y: player.y, angle: angle, charType: player.charType });
     createBullet(s, player.x, player.y, angle, player.charType, true);
-}
-
-// 物理判定の追加（ドレイン機能）
-function addPlayer(s, info) {
-    let color = (info.charType === 'shelly') ? 0x3498db : (info.charType === 'spike' ? 0x2ecc71 : 0x9b59b6);
-    player = s.add.circle(info.x, info.y, 20, color);
-    s.physics.add.existing(player);
-    player.charType = info.charType; player.hp = 100; player.revealTimer = 0;
-    player.ui = s.add.graphics().setDepth(10);
-    player.nameTag = s.add.text(info.x, info.y - 55, info.userName || 'No Name', { fontSize: '14px', fill: '#ffffff', fontStyle: 'bold' }).setOrigin(0.5).setDepth(10);
-    player.body.setCollideWorldBounds(true);
-    s.physics.add.collider(player, walls);
-    
-    // 敵の弾に当たった時
-    s.physics.add.overlap(player, enemyBullets, (p, b) => {
-        if(p.visible) { 
-            b.destroy(); 
-            socket.emit('updateHP', { id: socket.id, hp: Math.max(0, p.hp - 15), reveal: true }); 
-        }
-    });
-
-    // 自分の弾（エドガーのパンチ）が敵に当たった時の回復
-    s.physics.add.overlap(bullets, Object.values(otherPlayers), (b, target) => {
-        if (player.charType === 'edgar' && target.visible) {
-            player.hp = Math.min(100, player.hp + 5); // 回復！
-            socket.emit('updateHP', { id: socket.id, hp: player.hp, reveal: false });
-        }
-    });
-}
-
-// (残りの補助関数：setupVirtualJoysticks, createWall, createBush, explode, startReload, startRespawnSequenceなどは前回のロジックと同じ)
-// ※紙面の都合上省略しますが、前回の「全体コード」の関数をそのまま使用してください。
-
-function addOtherPlayers(s, info) {
-    let color = (info.charType === 'shelly') ? 0x3498db : (info.charType === 'spike' ? 0x2ecc71 : 0x9b59b6);
-    let op = s.add.circle(info.x, info.y, 20, color);
-    s.physics.add.existing(op); op.id = info.id; op.hp = 100; op.revealTimer = 0;
-    op.ui = s.add.graphics().setDepth(10);
-    op.nameTag = s.add.text(info.x, info.y - 55, info.userName || 'Enemy', { fontSize: '14px', fill: '#ffffff' }).setOrigin(0.5).setDepth(10);
-    otherPlayers[info.id] = op;
-    s.physics.add.overlap(bullets, op, (t, b) => { if(t.visible) { /* 当たり判定はクライアント側で処理 */ } });
 }
 
 function setupVirtualJoysticks(scene) {
@@ -227,8 +228,8 @@ function setupVirtualJoysticks(scene) {
     shootJoy = scene.add.circle(670, 470, r, 0x000000, 0.3).setDepth(150).setScrollFactor(0);
     shootThumb = scene.add.circle(670, 470, 35, 0xff0000, 0.5).setDepth(151).setScrollFactor(0);
     scene.input.addPointer(2);
-    scene.input.on('pointerdown', (p) => { if (p.x < 400) moveThumb.setPosition(p.x, p.y); else shootThumb.setPosition(p.x, p.y); });
-    scene.input.on('pointermove', (p) => {
+    scene.input.on('pointerdown', p => { if (p.x < 400) moveThumb.setPosition(p.x, p.y); else shootThumb.setPosition(p.x, p.y); });
+    scene.input.on('pointermove', p => {
         if (!p.isDown) return;
         if (p.x < 400) {
             let angle = Phaser.Math.Angle.Between(moveJoy.x, moveJoy.y, p.x, p.y);
@@ -240,45 +241,34 @@ function setupVirtualJoysticks(scene) {
             let angle = Phaser.Math.Angle.Between(shootJoy.x, shootJoy.y, p.x, p.y);
             let dist = Math.min(Phaser.Math.Distance.Between(shootJoy.x, shootJoy.y, p.x, p.y), r);
             shootThumb.setPosition(shootJoy.x + Math.cos(angle)*dist, shootJoy.y + Math.sin(angle)*dist);
-            shootData = { angle: angle, dist: dist };
-            isAiming = true;
+            shootData = { angle, dist }; isAiming = true;
         }
     });
-    scene.input.on('pointerup', (p) => {
+    scene.input.on('pointerup', p => {
         if (p.x < 400) { moveThumb.setPosition(130, 470); isMoving = false; }
         else {
             if (isAiming && shootData.dist > 20 && ammo > 0 && player.visible) {
-                handleAttack(scene, shootData.angle);
-                ammo--; if (!isReloading) startReload(scene);
+                handleAttack(scene, shootData.angle); ammo--; if (!isReloading) startReload(scene);
             }
             shootThumb.setPosition(670, 470); isAiming = false;
         }
     });
 }
+
 function createWall(s, x, y, w, h) { let wall = s.add.rectangle(x, y, w, h, 0x95a5a6); walls.add(wall); s.physics.add.existing(wall, true); }
 function createBush(s, x, y, w, h, id) { let bush = s.add.rectangle(x, y, w, h, 0x27ae60, 0.5); bush.bushId = id; bushes.add(bush); }
-function explode(s, x, y, color, group) {
-    for (let i = 0; i < 6; i++) {
-        let sb = s.add.circle(x, y, 4, color); group.add(sb); s.physics.add.existing(sb);
-        s.physics.velocityFromRotation((Math.PI * 2 / 6) * i, 300, sb.body.velocity);
-        s.time.delayedCall(400, () => sb.destroy());
-    }
-}
 function startReload(s) {
     isReloading = true;
-    s.time.addEvent({ delay: 1000, callback: () => { // エドガーがいるので少しリロードを早く
-        ammo++; updateUI(player); if (ammo < 3) startReload(s); else isReloading = false;
-    }});
+    s.time.addEvent({ delay: 1200, callback: () => { ammo++; updateUI(player); if (ammo < 3) startReload(s); else isReloading = false; }});
 }
 function startRespawnSequence(s) {
-    if (respawnTimerInterval) clearInterval(respawnTimerInterval);
     let count = 3; respawnText.setText(`復活まで: ${count}`);
     respawnTimerInterval = setInterval(() => {
         count--; if (count > 0) respawnText.setText(`復活まで: ${count}`);
-        else { clearInterval(respawnTimerInterval); respawnTimerInterval = null; respawnText.setText(''); socket.emit('respawnRequest'); }
+        else { clearInterval(respawnTimerInterval); respawnText.setText(''); socket.emit('respawnRequest'); }
     }, 1000);
 }
-window.launchGame = (type) => {
+window.launchGame = type => {
     const name = document.getElementById('nameInput').value || 'No Name';
     document.getElementById('overlay').style.display = 'none';
     socket.emit('joinGame', { charType: type, userName: name });
