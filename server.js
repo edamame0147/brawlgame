@@ -8,8 +8,6 @@ app.use(express.static('public'));
 let players = {};
 
 io.on('connection', (socket) => {
-    console.log('A user connected:', socket.id);
-
     socket.on('joinGame', (data) => {
         players[socket.id] = {
             id: socket.id,
@@ -68,10 +66,9 @@ io.on('connection', (socket) => {
 
     socket.on('disconnect', () => {
         if (players[socket.id]) {
-            console.log('User disconnected:', socket.id);
             delete players[socket.id];
             io.emit('playerDisconnected', socket.id);
-            io.emit('updateRanking', players); // ランキングから即座に消去
+            io.emit('updateRanking', players);
         }
     });
 });
