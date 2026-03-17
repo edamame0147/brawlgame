@@ -20,9 +20,9 @@ const config = {
 };
 
 const game = new Phaser.Game(config);
-let socket, player, bullets, enemyBullets, walls, bushes, effects;
+let socket, player, bullets, enemyBullets, walls, bushes;
 let otherPlayers = {};
-let ammo = 3, isReloading = false, ultGage = 0, isStunned = false, isActionLocked = false;
+let ammo = 3, isReloading = false, ultGage = 0, isStunned = false, isActionLocked = false, respawnText;
 let moveJoy, shootJoy, moveThumb, shootThumb, ultBtn;
 let isMoving = false, isAiming = false, isUltAiming = false, moveData = { x: 0, y: 0 }, shootData = { angle: 0, dist: 0 };
 
@@ -38,7 +38,6 @@ function create() {
     enemyBullets = this.physics.add.group();
     walls = this.physics.add.staticGroup();
     bushes = this.physics.add.staticGroup();
-    effects = this.add.group();
 
     const offsetX = (MAP_SIZE - (MAP_DESIGN[0].length * TILE_SIZE)) / 2;
     const offsetY = (MAP_SIZE - (MAP_DESIGN.length * TILE_SIZE)) / 2;
@@ -47,7 +46,7 @@ function create() {
             let x = offsetX + c * TILE_SIZE + TILE_SIZE/2;
             let y = offsetY + r * TILE_SIZE + TILE_SIZE/2;
             if (MAP_DESIGN[r][c] === 1) {
-                let w = walls.create(x, y, null).setSize(TILE_SIZE-4, TILE_SIZE-4).setVisible(false);
+                walls.create(x, y, null).setSize(TILE_SIZE-4, TILE_SIZE-4).setVisible(false);
                 this.add.rectangle(x, y, TILE_SIZE-4, TILE_SIZE-4, 0x95a5a6);
             }
             if (MAP_DESIGN[r][c] === 2) {
@@ -58,6 +57,7 @@ function create() {
         }
     }
 
+    respawnText = this.add.text(400, 300, '', { fontSize: '48px', fill: '#fff', fontStyle: 'bold' }).setOrigin(0.5).setDepth(200).setScrollFactor(0);
     setupVirtualJoysticks(this);
 
     socket.on('currentPlayers', (ps) => {
@@ -85,9 +85,15 @@ function create() {
     });
     socket.on('playerRespawned', info => {
         let t = (info.id === socket.id) ? player : otherPlayers[info.id];
-        if (t) { t.hp = 100; t.setPosition(info.x, info.y); t.setVisible(true); if(info.id === socket.id) { ammo = 3; ultGage = 0; isStunned = false; isActionLocked = false; } }
+        if (t) { t.hp = 100; t.setPosition(info.x, info.y); t.setVisible(true); if(info.id === socket.id) { respawnText.setText(''); ammo = 3; ultGage = 0; isStunned = false; isActionLocked = false; }}
+    });
+    socket.on('updateRanking', playersData => {
+        const list = document.getElementById('rankingList');
+        const sorted = Object.values(playersData).sort((a, b) => b.kills - a.kills);
+        list.innerHTML = sorted.map(p => `<div>${p.userName}: ${p.kills}</div>`).join('');
     });
     socket.on('showPin', data => { let t = (data.id === socket.id) ? player : otherPlayers[data.id]; if(t) displayPin(this, t, data.emoji); });
+    socket.on('playerDisconnected', id => { if(otherPlayers[id]) { if(otherPlayers[id].p) otherPlayers[id].p.destroy(); otherPlayers[id].ui.destroy(); otherPlayers[id].nameTag.destroy(); otherPlayers[id].destroy(); delete otherPlayers[id]; }});
 }
 
 function update() {
@@ -97,12 +103,9 @@ function update() {
             let speed = { shelly: 220, spike: 220, edgar: 270, frank: 160 }[player.charType] || 220;
             if (isMoving) player.body.setVelocity(moveData.x * speed, moveData.y * speed);
         }
-
         let bId = null;
         this.physics.overlap(player, bushes, (p, b) => bId = b.bushId);
-        player.isInBush = !!bId;
-        player.setAlpha(player.isInBush ? 0.6 : 1);
-
+        player.isInBush = !!bId; player.setAlpha(player.isInBush ? 0.6 : 1);
         socket.emit('playerMovement', { x: player.x, y: player.y, isInBush: player.isInBush, bushId: bId });
         updateUI(player);
     }
@@ -114,13 +117,13 @@ function addPlayer(s, info) {
     player = s.add.circle(info.x, info.y, 20, colors[info.charType]);
     s.physics.add.existing(player);
     player.charType = info.charType; player.hp = 100; player.ui = s.add.graphics().setDepth(10);
-    player.nameTag = s.add.text(info.x, info.y - 55, info.userName, { fontSize: '14px', fill: '#ffffff' }).setOrigin(0.5).setDepth(10);
+    player.nameTag = s.add.text(info.x, info.y - 55, info.userName, { fontSize: '14px', fill: '#ffffff', fontStyle: 'bold' }).setOrigin(0.5).setDepth(10);
     s.physics.add.collider(player, walls);
     s.physics.add.overlap(player, enemyBullets, (p, b) => {
         if(p.visible && p.hp > 0) {
             let d = b.isUlt ? { shelly: 35, spike: 15, edgar: 15, frank: 40 }[b.charType] : { shelly: 25, spike: 20, edgar: 15, frank: 35 }[b.charType];
             b.destroy();
-            socket.emit('updateHP', { id: socket.id, hp: Math.max(0, p.hp - d), attackerId: b.shooterId, stun: b.isFrankUlt });
+            socket.emit('updateHP', { id: socket.id, hp: Math.max(0, p.hp - d), attackerId: b.shooterId, stun: b.isFrankUlt, reveal: true });
         }
     });
 }
@@ -152,26 +155,15 @@ function createBullet(s, x, y, angle, charType, isMine, shooterId, isUlt) {
     };
 
     if (isUlt) {
-        if (charType === 'shelly') {
-            for(let i=-4; i<=4; i++) bConfig(x, y, angle + i*0.15, 600, 400, 7, 0xffff00, false);
-        } else if (charType === 'spike') {
+        if (charType === 'shelly') { for(let i=-4; i<=4; i++) bConfig(x, y, angle + i*0.15, 600, 400, 7, 0xffff00, false); }
+        else if (charType === 'spike') {
             let zone = s.add.circle(x + Math.cos(angle)*200, y + Math.sin(angle)*200, 100, 0x2ecc71, 0.3).setDepth(1);
             s.physics.add.existing(zone);
-            s.time.addEvent({ delay: 500, repeat: 10, callback: () => {
-                if(s.physics.overlap(player, zone)) {
-                    socket.emit('updateHP', { id: socket.id, hp: Math.max(0, player.hp - 5), attackerId: shooterId });
-                }
-            }});
+            s.time.addEvent({ delay: 500, repeat: 10, callback: () => { if(s.physics.overlap(player, zone)) socket.emit('updateHP', { id: socket.id, hp: Math.max(0, player.hp - 5), attackerId: shooterId }); }});
             s.time.delayedCall(5000, () => zone.destroy());
         } else if (charType === 'edgar') {
-            if(isMine) {
-                isActionLocked = true;
-                s.tweens.add({ targets: player, x: x+Math.cos(angle)*250, y: y+Math.sin(angle)*250, duration: 600, ease: 'Power2', onComplete: () => isActionLocked = false });
-            }
-        } else if (charType === 'frank') {
-            let b = bConfig(x, y, angle, 400, 400, 80, 0xffff00, true);
-            b.isFrankUlt = true;
-        }
+            if(isMine) { isActionLocked = true; s.tweens.add({ targets: player, x: x+Math.cos(angle)*250, y: y+Math.sin(angle)*250, duration: 600, ease: 'Power2', onComplete: () => isActionLocked = false }); }
+        } else if (charType === 'frank') { let b = bConfig(x, y, angle, 400, 400, 80, 0xffff00, true); b.isFrankUlt = true; }
     } else {
         if (charType === 'frank') { for(let i=-2; i<=2; i++) bConfig(x, y, angle+i*0.2, 400, 350, 25, 0x795548, true); }
         else if (charType === 'shelly') { for(let i=-1; i<=1; i++) bConfig(x, y, angle+i*0.2, 450, 450, 5, 0xf1c40f, false); }
@@ -200,7 +192,9 @@ function setupVirtualJoysticks(scene) {
     
     scene.input.addPointer(2);
     scene.input.on('pointerdown', p => {
-        if(Phaser.Math.Distance.Between(p.x, p.y, ultBtn.x, ultBtn.y) < 40 && ultGage >= 100) { isUltAiming = true; ultBtn.setFillStyle(0xffff00); }
+        if(Phaser.Math.Distance.Between(p.x, p.y, ultBtn.x, ultBtn.y) < 45 && ultGage >= 100) { 
+            isUltAiming = true; shootThumb.setFillStyle(0xffff00); 
+        }
     });
     scene.input.on('pointermove', p => {
         if (!p.isDown) return;
@@ -219,36 +213,42 @@ function setupVirtualJoysticks(scene) {
     scene.input.on('pointerup', p => {
         if (p.x < 400) { moveThumb.setPosition(130, 470); isMoving = false; }
         else {
-            if (isUltAiming) {
+            if (isUltAiming && shootData.dist > 20) {
                 socket.emit('ult', { id: socket.id, x: player.x, y: player.y, angle: shootData.angle, charType: player.charType });
                 createBullet(scene, player.x, player.y, shootData.angle, player.charType, true, socket.id, true);
-                ultGage = 0; isUltAiming = false; ultBtn.setFillStyle(0x555555);
+                ultGage = 0; isUltAiming = false; shootThumb.setFillStyle(0xff0000);
             } else if (isAiming && shootData.dist > 20 && ammo > 0) {
                 if(player.charType === 'frank') { isActionLocked = true; scene.time.delayedCall(400, () => isActionLocked = false); }
                 socket.emit('shoot', { id: socket.id, x: player.x, y: player.y, angle: shootData.angle, charType: player.charType });
                 createBullet(scene, player.x, player.y, shootData.angle, player.charType, true, socket.id, false);
                 ammo--; startReload(scene);
             }
-            shootThumb.setPosition(670, 470); isAiming = false;
+            shootThumb.setPosition(670, 470); isAiming = false; isUltAiming = false; shootThumb.setFillStyle(0xff0000);
         }
     });
 }
 
 function updateUI(t) {
-    t.ui.clear();
-    if (!t.visible) { t.nameTag.setVisible(false); return; }
+    t.ui.clear(); if (!t.visible) { t.nameTag.setVisible(false); return; }
     t.nameTag.setVisible(true).setPosition(t.x, t.y - 55);
     t.ui.fillStyle(0xc0392b); t.ui.fillRect(t.x-20, t.y-35, 40, 6);
     t.ui.fillStyle(0x2ecc71); t.ui.fillRect(t.x-20, t.y-35, (t.hp/100)*40, 6);
     if (t === player) {
         for (let i=0; i<3; i++) { t.ui.fillStyle(i < ammo ? 0xf1c40f : 0x555555); t.ui.fillRect(t.x-20+(i*14), t.y-25, 12, 4); }
         ultBtn.alpha = ultGage >= 100 ? 1 : 0.3;
-        if(ultGage >= 100) ultBtn.setStrokeStyle(2, 0xffffff); else ultBtn.setStrokeStyle(0);
     }
 }
 
 function startReload(scene) { if(isReloading) return; isReloading = true; scene.time.addEvent({ delay: 1200, callback: () => { ammo++; if(ammo<3) isReloading=false, startReload(scene); else isReloading=false; updateUI(player); }}); }
-function startRespawnSequence(s) { setTimeout(() => socket.emit('respawnRequest'), 3000); }
+
+function startRespawnSequence(s) {
+    let count = 3; respawnText.setText(`復活まで: ${count}`);
+    let interval = setInterval(() => {
+        count--; if (count > 0) respawnText.setText(`復活まで: ${count}`);
+        else { clearInterval(interval); respawnText.setText(''); socket.emit('respawnRequest'); }
+    }, 1000);
+}
+
 function displayPin(s, t, e) { if(t.p) t.p.destroy(); t.p = s.add.text(t.x, t.y-80, e, {fontSize:'30px'}).setOrigin(0.5); s.time.delayedCall(2000, () => t.p && t.p.destroy()); }
 window.launchGame = type => { document.getElementById('overlay').style.display = 'none'; socket.emit('joinGame', { charType: type, userName: document.getElementById('nameInput').value || 'No Name' }); };
 window.sendPin = e => { if(socket && player && player.visible) socket.emit('sendPin', { id: socket.id, emoji: e }); };
