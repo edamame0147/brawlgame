@@ -21,10 +21,13 @@ const MAP_DESIGN = [
 
 const config = {
     type: Phaser.AUTO,
-    width: 800, 
-    height: 600,
+    scale: {
+        mode: Phaser.Scale.FIT,
+        autoCenter: Phaser.Scale.CENTER_BOTH,
+        width: 800,
+        height: 600
+    },
     backgroundColor: '#34495e',
-    parent: 'game-container',
     physics: { default: 'arcade', arcade: { gravity: { y: 0 } } },
     scene: { preload, create, update }
 };
@@ -69,6 +72,7 @@ function create() {
         Object.keys(players).forEach((id) => {
             if (id === socket.id && !player) {
                 addPlayer(this, players[id]);
+                // カメラ追従を確実に実行
                 this.cameras.main.startFollow(player, true, 0.1, 0.1);
             }
             else if (id !== socket.id && !otherPlayers[id]) addOtherPlayers(this, players[id]);
@@ -263,8 +267,15 @@ function setupVirtualJoysticks(scene) {
     moveThumb = scene.add.circle(130, 470, 35, 0xcccccc, 0.5).setDepth(151).setScrollFactor(0);
     shootJoy = scene.add.circle(670, 470, r, 0x000000, 0.3).setDepth(150).setScrollFactor(0);
     shootThumb = scene.add.circle(670, 470, 35, 0xff0000, 0.5).setDepth(151).setScrollFactor(0);
-    scene.input.addPointer(2);
-    scene.input.on('pointerdown', p => { if (p.x < 400) moveThumb.setPosition(p.x, p.y); else shootThumb.setPosition(p.x, p.y); });
+    
+    scene.input.addPointer(2); // マルチタッチ対応
+
+    scene.input.on('pointerdown', p => {
+        // スケール後の座標を取得して判定
+        if (p.x < 400) moveThumb.setPosition(p.x, p.y);
+        else shootThumb.setPosition(p.x, p.y);
+    });
+
     scene.input.on('pointermove', p => {
         if (!p.isDown) return;
         if (p.x < 400) {
@@ -280,11 +291,14 @@ function setupVirtualJoysticks(scene) {
             shootData = { angle, dist }; isAiming = true;
         }
     });
+
     scene.input.on('pointerup', p => {
         if (p.x < 400) { moveThumb.setPosition(130, 470); isMoving = false; }
         else {
             if (isAiming && shootData.dist > 20 && ammo > 0 && player.visible) {
-                handleAttack(scene, shootData.angle); ammo--; if (!isReloading) startReload(scene);
+                handleAttack(scene, shootData.angle); 
+                ammo--; 
+                if (!isReloading) startReload(scene);
             }
             shootThumb.setPosition(670, 470); isAiming = false;
         }
