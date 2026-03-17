@@ -23,7 +23,7 @@ const game = new Phaser.Game(config);
 let socket, player, bullets, enemyBullets, walls, bushes;
 let otherPlayers = {};
 let ammo = 3, isReloading = false, ultGage = 0, isStunned = false, isActionLocked = false, respawnText;
-let moveJoy, shootJoy, moveThumb, shootThumb, ultBtn;
+let moveJoy, shootJoy, moveThumb, shootThumb, ultBtn, ultGageGraphics, aimGuide;
 let isMoving = false, isAiming = false, isUltAiming = false, moveData = { x: 0, y: 0 }, shootData = { angle: 0, dist: 0 };
 
 function preload() {}
@@ -38,6 +38,7 @@ function create() {
     enemyBullets = this.physics.add.group();
     walls = this.physics.add.staticGroup();
     bushes = this.physics.add.staticGroup();
+    aimGuide = this.add.graphics().setDepth(5);
 
     const offsetX = (MAP_SIZE - (MAP_DESIGN[0].length * TILE_SIZE)) / 2;
     const offsetY = (MAP_SIZE - (MAP_DESIGN.length * TILE_SIZE)) / 2;
@@ -97,12 +98,19 @@ function create() {
 }
 
 function update() {
+    aimGuide.clear();
     if (player && player.visible) {
         player.body.setVelocity(0);
         if (!isStunned && !isActionLocked) {
             let speed = { shelly: 220, spike: 220, edgar: 270, frank: 160 }[player.charType] || 220;
             if (isMoving) player.body.setVelocity(moveData.x * speed, moveData.y * speed);
         }
+
+        // エイムガイドの描画
+        if (isAiming || isUltAiming) {
+            drawAimGuide(player.charType, shootData.angle, isUltAiming);
+        }
+
         let bId = null;
         this.physics.overlap(player, bushes, (p, b) => bId = b.bushId);
         player.isInBush = !!bId; player.setAlpha(player.isInBush ? 0.6 : 1);
@@ -110,6 +118,35 @@ function update() {
         updateUI(player);
     }
     Object.values(otherPlayers).forEach(op => updateUI(op));
+}
+
+function drawAimGuide(charType, angle, isUlt) {
+    aimGuide.lineStyle(2, 0xffffff, 0.4);
+    aimGuide.fillStyle(0xffffff, 0.15);
+    
+    let range = isUlt ? 250 : { shelly: 200, spike: 200, edgar: 80, frank: 180 }[charType];
+    
+    if (charType === 'edgar' && isUlt) {
+        // エドガーのウルトは着地地点の円
+        aimGuide.strokeCircle(player.x + Math.cos(angle)*range, player.y + Math.sin(angle)*range, 45);
+        aimGuide.fillCircle(player.x + Math.cos(angle)*range, player.y + Math.sin(angle)*range, 45);
+    } else if (charType === 'shelly' || charType === 'frank' || (charType === 'spike' && isUlt)) {
+        // 扇形ガイド
+        aimGuide.beginPath();
+        aimGuide.moveTo(player.x, player.y);
+        aimGuide.arc(player.x, player.y, range, angle - 0.3, angle + 0.3);
+        aimGuide.closePath();
+        aimGuide.fillPath();
+        aimGuide.strokePath();
+    } else {
+        // 直線ガイド
+        let endX = player.x + Math.cos(angle) * range;
+        let endY = player.y + Math.sin(angle) * range;
+        aimGuide.lineBetween(player.x, player.y, endX, endY);
+        if (charType === 'spike' && !isUlt) {
+            aimGuide.strokeCircle(endX, endY, 15);
+        }
+    }
 }
 
 function addPlayer(s, info) {
@@ -136,7 +173,9 @@ function addOtherPlayers(s, info) {
     otherPlayers[info.id] = op;
     s.physics.add.overlap(bullets, op, (target, b) => {
         if (target.visible && b.shooterId === socket.id) {
-            ultGage = Math.min(100, ultGage + 15);
+            // ウルト蓄積：通常攻撃で1ヒットにつき12%〜20%上昇
+            let gain = b.isUlt ? 0 : { shelly: 12, spike: 20, edgar: 15, frank: 25 }[player.charType];
+            ultGage = Math.min(100, ultGage + gain);
             if (player.charType === 'edgar') player.hp = Math.min(100, player.hp + 3);
         }
     });
@@ -157,7 +196,8 @@ function createBullet(s, x, y, angle, charType, isMine, shooterId, isUlt) {
     if (isUlt) {
         if (charType === 'shelly') { for(let i=-4; i<=4; i++) bConfig(x, y, angle + i*0.15, 600, 400, 7, 0xffff00, false); }
         else if (charType === 'spike') {
-            let zone = s.add.circle(x + Math.cos(angle)*200, y + Math.sin(angle)*200, 100, 0x2ecc71, 0.3).setDepth(1);
+            let tx = x + Math.cos(angle)*200, ty = y + Math.sin(angle)*200;
+            let zone = s.add.circle(tx, ty, 100, 0x2ecc71, 0.3).setDepth(1);
             s.physics.add.existing(zone);
             s.time.addEvent({ delay: 500, repeat: 10, callback: () => { if(s.physics.overlap(player, zone)) socket.emit('updateHP', { id: socket.id, hp: Math.max(0, player.hp - 5), attackerId: shooterId }); }});
             s.time.delayedCall(5000, () => zone.destroy());
@@ -188,7 +228,10 @@ function setupVirtualJoysticks(scene) {
     moveThumb = scene.add.circle(130, 470, 35, 0xcccccc, 0.5).setDepth(151).setScrollFactor(0);
     shootJoy = scene.add.circle(670, 470, 65, 0x000000, 0.3).setDepth(150).setScrollFactor(0);
     shootThumb = scene.add.circle(670, 470, 35, 0xff0000, 0.5).setDepth(151).setScrollFactor(0);
-    ultBtn = scene.add.circle(550, 500, 40, 0x555555, 0.8).setDepth(150).setScrollFactor(0).setInteractive();
+    
+    // ウルトボタンとゲージ
+    ultBtn = scene.add.circle(550, 500, 42, 0x333333, 0.8).setDepth(150).setScrollFactor(0).setInteractive();
+    ultGageGraphics = scene.add.graphics().setDepth(151).setScrollFactor(0);
     
     scene.input.addPointer(2);
     scene.input.on('pointerdown', p => {
@@ -233,9 +276,33 @@ function updateUI(t) {
     t.nameTag.setVisible(true).setPosition(t.x, t.y - 55);
     t.ui.fillStyle(0xc0392b); t.ui.fillRect(t.x-20, t.y-35, 40, 6);
     t.ui.fillStyle(0x2ecc71); t.ui.fillRect(t.x-20, t.y-35, (t.hp/100)*40, 6);
+    
     if (t === player) {
         for (let i=0; i<3; i++) { t.ui.fillStyle(i < ammo ? 0xf1c40f : 0x555555); t.ui.fillRect(t.x-20+(i*14), t.y-25, 12, 4); }
-        ultBtn.alpha = ultGage >= 100 ? 1 : 0.3;
+        
+        // ウルトボタンのゲージ描画
+        ultGageGraphics.clear();
+        let r = 42;
+        // 背景の黒円
+        ultGageGraphics.fillStyle(0x222222, 0.8);
+        ultGageGraphics.fillCircle(ultBtn.x, ultBtn.y, r);
+        
+        // 黄色の充填ゲージ（下から上へ）
+        if (ultGage > 0) {
+            ultGageGraphics.fillStyle(0xf1c40f, 1);
+            let mask = new Phaser.Geom.Circle(ultBtn.x, ultBtn.y, r);
+            let percent = ultGage / 100;
+            let rectH = r * 2 * percent;
+            ultGageGraphics.fillRect(ultBtn.x - r, ultBtn.y + r - rectH, r * 2, rectH);
+            // ゲージが丸からはみ出ないように円形にクリップ（簡易的に円で上書き描画）
+            if (ultGage < 100) {
+                ultGageGraphics.lineStyle(4, 0x333333, 1);
+                ultGageGraphics.strokeCircle(ultBtn.x, ultBtn.y, r);
+            } else {
+                ultGageGraphics.lineStyle(4, 0xffffff, 1);
+                ultGageGraphics.strokeCircle(ultBtn.x, ultBtn.y, r);
+            }
+        }
     }
 }
 
