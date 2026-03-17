@@ -14,9 +14,10 @@ io.on('connection', (socket) => {
         players[socket.id] = {
             x: 600, y: 600, id: socket.id,
             charType: data.charType, userName: data.userName,
-            hp: 100, kills: 0, ultGage: 0
+            hp: 100, kills: 0, isInBush: false, bushId: null
         };
         io.emit('currentPlayers', players);
+        io.emit('updateRanking', players);
     });
 
     socket.on('playerMovement', (data) => {
@@ -32,9 +33,11 @@ io.on('connection', (socket) => {
 
     socket.on('updateHP', (data) => {
         if (players[data.id]) {
+            let oldHp = players[data.id].hp;
             players[data.id].hp = data.hp;
-            io.emit('hpUpdate', data);
-            if (data.hp <= 0 && data.attackerId && players[data.attackerId]) {
+            io.emit('hpUpdate', { id: data.id, hp: data.hp, reveal: data.reveal, stun: data.stun });
+
+            if (oldHp > 0 && data.hp <= 0 && data.attackerId && players[data.attackerId]) {
                 players[data.attackerId].kills++;
                 io.emit('updateRanking', players);
             }
@@ -44,6 +47,8 @@ io.on('connection', (socket) => {
     socket.on('respawnRequest', () => {
         if (players[socket.id]) {
             players[socket.id].hp = 100;
+            players[socket.id].x = Math.floor(Math.random() * 800) + 200;
+            players[socket.id].y = Math.floor(Math.random() * 800) + 200;
             io.emit('playerRespawned', players[socket.id]);
         }
     });
@@ -51,6 +56,7 @@ io.on('connection', (socket) => {
     socket.on('disconnect', () => {
         delete players[socket.id];
         io.emit('playerDisconnected', socket.id);
+        io.emit('updateRanking', players);
     });
 });
 
