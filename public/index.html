@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Brawl Clone - Kill Ranking</title>
+    <title>Brawl Clone - Ultimate Update</title>
     <script src="https://cdn.jsdelivr.net/npm/phaser@3.60.0/dist/phaser-arcade-physics.min.js"></script>
     <script src="/socket.io/socket.io.js"></script>
     <style>
@@ -13,33 +13,45 @@
             background: rgba(0,0,0,0.9); display: flex; justify-content: center;
             align-items: center; z-index: 1000;
         }
-        .login-box { text-align: center; color: white; background: #34495e; padding: 30px; border-radius: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
+        .login-box { text-align: center; color: white; background: #34495e; padding: 30px; border-radius: 20px; }
         input { padding: 12px; font-size: 18px; border-radius: 8px; border: none; width: 220px; margin-bottom: 20px; outline: none; }
         .char-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
-        .char-btn { padding: 15px; font-size: 14px; color: white; border: none; border-radius: 10px; cursor: pointer; transition: 0.2s; font-weight: bold; }
-        .shelly { background: #3498db; }
-        .spike { background: #2ecc71; }
-        .edgar { background: #9b59b6; }
-        .char-btn:hover { filter: brightness(1.2); }
-        .char-btn:active { transform: scale(0.9); }
+        .char-btn { padding: 15px; font-size: 14px; color: white; border: none; border-radius: 10px; cursor: pointer; font-weight: bold; }
+        .shelly { background: #3498db; } .spike { background: #2ecc71; } .edgar { background: #9b59b6; }
         
-        /* キルランキング用スタイル */
-        #killRanking {
-            position: fixed; top: 10px; right: 10px; width: 180px;
-            background: rgba(0, 0, 0, 0.5); color: white; padding: 10px;
-            border-radius: 10px; font-size: 14px; pointer-events: none; z-index: 500;
+        #uiContainer {
+            position: fixed; top: 10px; right: 10px; width: 160px;
+            display: flex; flex-direction: column; gap: 10px; z-index: 500;
         }
+        .ui-box { background: rgba(0, 0, 0, 0.6); color: white; padding: 10px; border-radius: 10px; font-size: 13px; }
+        .pins-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; margin-top: 5px; }
+        .pin-btn {
+            background: #f1c40f; border: none; border-radius: 5px; padding: 5px;
+            cursor: pointer; font-size: 20px; transition: 0.1s;
+        }
+        .pin-btn:active { transform: scale(0.9); }
     </style>
 </head>
 <body>
-    <div id="killRanking">
-        <div style="font-weight: bold; border-bottom: 1px solid #ccc; margin-bottom: 5px;">キルランキング</div>
-        <div id="rankingList"></div>
+    <div id="uiContainer">
+        <div class="ui-box">
+            <div style="font-weight: bold; border-bottom: 1px solid #aaa; margin-bottom: 5px;">キル数</div>
+            <div id="rankingList"></div>
+        </div>
+        <div class="ui-box">
+            <div style="font-weight: bold; border-bottom: 1px solid #aaa;">ピンズ</div>
+            <div class="pins-grid">
+                <button class="pin-btn" onclick="sendPin('👍')">👍</button>
+                <button class="pin-btn" onclick="sendPin('👎')">👎</button>
+                <button class="pin-btn" onclick="sendPin('😊')">😊</button>
+                <button class="pin-btn" onclick="sendPin('😡')">😡</button>
+            </div>
+        </div>
     </div>
     <div id="overlay">
         <div class="login-box">
-            <h1 style="margin-top:0;">Brawl Clone</h1>
-            <input type="text" id="nameInput" placeholder="名前を入力..." maxlength="10"><br>
+            <h1>Brawl Clone</h1>
+            <input type="text" id="nameInput" placeholder="名前..." maxlength="10"><br>
             <div class="char-grid">
                 <button class="char-btn shelly" onclick="launchGame('shelly')">シェリー</button>
                 <button class="char-btn spike" onclick="launchGame('spike')">スパイク</button>
