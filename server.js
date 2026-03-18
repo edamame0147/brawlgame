@@ -16,7 +16,8 @@ io.on('connection', (socket) => {
             charType: data.charType,
             userName: data.userName,
             hp: 100,
-            kills: 0
+            kills: 0,
+            isDead: false // 重複キル防止用
         };
         io.emit('currentPlayers', players);
         io.emit('updateRanking', players);
@@ -32,37 +33,39 @@ io.on('connection', (socket) => {
         }
     });
 
-    socket.on('shoot', (data) => {
-        socket.broadcast.emit('enemyShoot', data);
-    });
-
-    socket.on('ult', (data) => {
-        socket.broadcast.emit('enemyUlt', data);
-    });
+    socket.on('shoot', (data) => { socket.broadcast.emit('enemyShoot', data); });
+    socket.on('ult', (data) => { socket.broadcast.emit('enemyUlt', data); });
 
     socket.on('updateHP', (data) => {
-        if (players[data.id]) {
-            players[data.id].hp = data.hp;
-            if (data.hp <= 0 && players[data.attackerId]) {
-                players[data.attackerId].kills++;
+        const victim = players[data.id];
+        const attacker = players[data.attackerId];
+
+        if (victim && !victim.isDead) {
+            victim.hp = data.hp;
+            if (victim.hp <= 0) {
+                victim.isDead = true;
+                victim.hp = 0;
+                // 攻撃者が存在し、自分自身でない場合にキル数を加算
+                if (attacker && attacker.id !== victim.id) {
+                    attacker.kills++;
+                }
                 io.emit('updateRanking', players);
             }
-            io.emit('hpUpdate', data);
+            io.emit('hpUpdate', { ...data, hp: victim.hp });
         }
     });
 
     socket.on('respawnRequest', () => {
         if (players[socket.id]) {
             players[socket.id].hp = 100;
+            players[socket.id].isDead = false;
             players[socket.id].x = Math.random() * 1000 + 100;
             players[socket.id].y = Math.random() * 1000 + 100;
             io.emit('playerRespawned', players[socket.id]);
         }
     });
 
-    socket.on('sendPin', (data) => {
-        io.emit('showPin', data);
-    });
+    socket.on('sendPin', (data) => { io.emit('showPin', data); });
 
     socket.on('disconnect', () => {
         if (players[socket.id]) {
@@ -73,6 +76,4 @@ io.on('connection', (socket) => {
     });
 });
 
-http.listen(3000, () => {
-    console.log('Server is running on port 3000');
-});
+http.listen(3000, () => { console.log('Server is running on port 3000'); });
