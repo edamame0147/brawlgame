@@ -13,7 +13,12 @@ const MAP_DESIGN = [
 
 const config = {
     type: Phaser.AUTO,
-    scale: { mode: Phaser.Scale.FIT, autoCenter: Phaser.Scale.CENTER_BOTH, width: 800, height: 600 },
+    scale: {
+        mode: Phaser.Scale.RESIZE, // 画面サイズに合わせてリサイズ
+        parent: 'phaser-game',
+        width: '100%',
+        height: '100%'
+    },
     backgroundColor: '#34495e',
     physics: { default: 'arcade', arcade: { gravity: { y: 0 } } },
     scene: { preload, create, update }
@@ -58,8 +63,14 @@ function create() {
         }
     }
 
-    respawnText = this.add.text(400, 300, '', { fontSize: '48px', fill: '#fff', fontStyle: 'bold' }).setOrigin(0.5).setDepth(200).setScrollFactor(0);
+    respawnText = this.add.text(window.innerWidth/2, window.innerHeight/2, '', { fontSize: '64px', fill: '#fff', fontStyle: 'bold' }).setOrigin(0.5).setDepth(200).setScrollFactor(0);
     setupVirtualJoysticks(this);
+
+    // 画面リサイズ対応
+    this.scale.on('resize', (gameSize) => {
+        respawnText.setPosition(gameSize.width / 2, gameSize.height / 2);
+        updateJoystickPositions(gameSize.width, gameSize.height);
+    });
 
     socket.on('currentPlayers', ps => {
         Object.keys(ps).forEach(id => {
@@ -83,16 +94,7 @@ function create() {
     });
     socket.on('playerRespawned', info => {
         let t = (info.id === socket.id) ? player : otherPlayers[info.id];
-        if (t) { 
-            t.hp = 100; t.setPosition(info.x, info.y); t.setVisible(true); 
-            if(info.id === socket.id) { 
-                respawnText.setText(''); 
-                ammo = 3; 
-                // ここで ultGage = 0 を削除することで、ゲージを保持するようにしました
-                isStunned = false; 
-                isActionLocked = false; 
-            }
-        }
+        if (t) { t.hp = 100; t.setPosition(info.x, info.y); t.setVisible(true); if(info.id === socket.id) { respawnText.setText(''); ammo = 3; isStunned = false; isActionLocked = false; }}
     });
     socket.on('playerDisconnected', id => { if(otherPlayers[id]) { if(otherPlayers[id].ui) otherPlayers[id].ui.destroy(); if(otherPlayers[id].nameTag) otherPlayers[id].nameTag.destroy(); if(otherPlayers[id].pinGroup) otherPlayers[id].pinGroup.destroy(); otherPlayers[id].destroy(); delete otherPlayers[id]; }});
     socket.on('updateRanking', ps => { const l = document.getElementById('rankingList'); if(l) l.innerHTML = Object.values(ps).sort((a,b)=>b.kills-a.kills).map(p=>`<div>${p.userName}: ${p.kills}</div>`).join(''); });
@@ -248,23 +250,24 @@ function getAutoAimAngle(charType, isUlt) {
 }
 
 function setupVirtualJoysticks(scene) {
-    moveJoy = scene.add.circle(130, 470, 65, 0x000000, 0.3).setDepth(150).setScrollFactor(0);
-    moveThumb = scene.add.circle(130, 470, 35, 0xcccccc, 0.5).setDepth(151).setScrollFactor(0);
-    shootJoy = scene.add.circle(670, 470, 65, 0x000000, 0.3).setDepth(150).setScrollFactor(0);
-    shootThumb = scene.add.circle(670, 470, 35, 0xff0000, 0.5).setDepth(151).setScrollFactor(0);
-    ultBtn = scene.add.circle(550, 500, 42, 0x333333, 0.8).setDepth(150).setScrollFactor(0).setInteractive();
+    moveJoy = scene.add.circle(0, 0, 65, 0x000000, 0.3).setDepth(150).setScrollFactor(0);
+    moveThumb = scene.add.circle(0, 0, 35, 0xcccccc, 0.5).setDepth(151).setScrollFactor(0);
+    shootJoy = scene.add.circle(0, 0, 65, 0x000000, 0.3).setDepth(150).setScrollFactor(0);
+    shootThumb = scene.add.circle(0, 0, 35, 0xff0000, 0.5).setDepth(151).setScrollFactor(0);
+    ultBtn = scene.add.circle(0, 0, 42, 0x333333, 0.8).setDepth(150).setScrollFactor(0).setInteractive();
     ultGageGraphics = scene.add.graphics().setDepth(151).setScrollFactor(0);
-    let ms = scene.make.graphics().setScrollFactor(0); ms.fillStyle(0xffffff); ms.fillCircle(550, 500, 42);
-    ultGageGraphics.setMask(ms.createGeometryMask());
+    
+    updateJoystickPositions(scene.scale.width, scene.scale.height);
+
     scene.input.addPointer(2);
     scene.input.on('pointerdown', p => { 
         touchStartTime = Date.now();
-        if(Phaser.Math.Distance.Between(p.x, p.y, ultBtn.x, ultBtn.y) < 45 && ultGage >= 100) { isUltAiming = true; shootData.dist = 0; } 
-        else if(p.x > 400) { isAiming = true; shootData.dist = 0; }
+        if(Phaser.Math.Distance.Between(p.x, p.y, ultBtn.x, ultBtn.y) < 50 && ultGage >= 100) { isUltAiming = true; shootData.dist = 0; } 
+        else if(p.x > scene.scale.width/2) { isAiming = true; shootData.dist = 0; }
     });
     scene.input.on('pointermove', p => {
         if (!p.isDown) return;
-        if (p.x < 400) {
+        if (p.x < scene.scale.width/2) {
             let a = Phaser.Math.Angle.Between(moveJoy.x, moveJoy.y, p.x, p.y), d = Math.min(Phaser.Math.Distance.Between(moveJoy.x, moveJoy.y, p.x, p.y), 65);
             moveThumb.setPosition(moveJoy.x + Math.cos(a)*d, moveJoy.y + Math.sin(a)*d);
             moveData = { x: Math.cos(a)*(d/65), y: Math.sin(a)*(d/65) }; isMoving = true;
@@ -275,7 +278,7 @@ function setupVirtualJoysticks(scene) {
         }
     });
     scene.input.on('pointerup', p => {
-        if (p.x < 400) { moveThumb.setPosition(130, 470); isMoving = false; }
+        if (p.x < scene.scale.width/2) { moveThumb.setPosition(moveJoy.x, moveJoy.y); isMoving = false; }
         else {
             let duration = Date.now() - touchStartTime;
             let finalAngle = shootData.angle; let finalPower = shootData.power;
@@ -290,9 +293,18 @@ function setupVirtualJoysticks(scene) {
                 createBullet(scene, player.x, player.y, finalAngle, player.charType, true, socket.id, false);
                 ammo--; startReload(scene);
             }
-            shootThumb.setPosition(670, 470); isAiming = false; isUltAiming = false; shootData.dist = 0;
+            shootThumb.setPosition(shootJoy.x, shootJoy.y); isAiming = false; isUltAiming = false; shootData.dist = 0;
         }
     });
+}
+
+function updateJoystickPositions(w, h) {
+    if(!moveJoy) return;
+    moveJoy.setPosition(130, h - 130);
+    moveThumb.setPosition(130, h - 130);
+    shootJoy.setPosition(w - 130, h - 130);
+    shootThumb.setPosition(w - 130, h - 130);
+    ultBtn.setPosition(w - 250, h - 100);
 }
 
 function updateUI(t) {
