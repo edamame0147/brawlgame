@@ -248,11 +248,13 @@ function createBullet(s, x, y, angle, charType, isMine, shooterId, isUlt, power 
 
     function splitSpike(scene, sx, sy, sid, mine) {
         for(let i=0; i<6; i++) {
-            let sb = isMine ? s.add.circle(sx, sy, 5, 0x2ecc71) : s.add.circle(sx, sy, 5, 0x2ecc71);
-            group.add(sb); s.physics.add.existing(sb);
-            s.physics.velocityFromRotation((Math.PI*2/6)*i, 200, sb.body.velocity);
+            let sb = scene.add.circle(sx, sy, 5, 0x2ecc71);
+            group.add(sb); scene.physics.add.existing(sb);
+            scene.physics.velocityFromRotation((Math.PI*2/6)*i, 200, sb.body.velocity);
+            // 分裂弾に壁との衝突判定を追加し、貫通を防止
+            scene.physics.add.collider(sb, walls, () => sb.destroy());
             sb.charType = 'spike'; sb.shooterId = sid; sb.isUlt = false;
-            s.time.delayedCall(300, () => { if(sb.active) sb.destroy(); });
+            scene.time.delayedCall(300, () => { if(sb.active) sb.destroy(); });
         }
     }
 
@@ -295,9 +297,7 @@ function addPlayer(s, info) {
         if(p.visible && p.hp > 0 && b.active) {
             p.lastRegenTime = Date.now();
             let d = b.isUlt ? { shelly: 35, spike: 5, edgar: 15, frank: 30 }[b.charType] : { shelly: 25, spike: 20, edgar: 15, frank: 20 }[b.charType];
-            
             if (b.charType === 'spike' && b.isUlt) {
-                // スパイクのウルト：0.5秒に1回ダメージを与える（即死回避）
                 if (!p.lastUltHit || Date.now() - p.lastUltHit > 500) {
                     p.lastUltHit = Date.now();
                     socket.emit('updateHP', { id: socket.id, hp: Math.max(0, p.hp - d), attackerId: b.shooterId });
