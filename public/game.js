@@ -28,7 +28,7 @@ const config = {
 const game = new Phaser.Game(config);
 let socket, player, bullets, enemyBullets, walls, bushes, aimGuide;
 let otherPlayers = {};
-let ammo = 3, isReloading = false, ultGage = 0, isStun stunned = false, isActionLocked = false, respawnText;
+let ammo = 3, isReloading = false, ultGage = 0, isStunned = false, isActionLocked = false, respawnText;
 let moveJoy, shootJoy, moveThumb, shootThumb, ultBtn, ultGageGraphics;
 let isMoving = false, isAiming = false, isUltAiming = false, moveData = { x: 0, y: 0 }, shootData = { angle: 0, dist: 0, power: 0 };
 let lastMoveAngle = 0, touchStartTime = 0;
@@ -37,9 +37,7 @@ function preload() {}
 
 function create() {
     socket = io();
-    
     this.cameras.main.setZoom(1.5);
-
     this.physics.world.setBounds(0, 0, MAP_SIZE, MAP_SIZE);
     this.cameras.main.setBounds(0, 0, MAP_SIZE, MAP_SIZE);
     this.add.grid(MAP_SIZE/2, MAP_SIZE/2, MAP_SIZE, MAP_SIZE, TILE_SIZE, TILE_SIZE, 0x34495e).setOutlineStyle(0x2c3e50);
@@ -68,7 +66,6 @@ function create() {
     }
 
     respawnText = this.add.text(window.innerWidth/2, window.innerHeight/2, '', { fontSize: '64px', fill: '#fff', fontStyle: 'bold' }).setOrigin(0.5).setDepth(200).setScrollFactor(0);
-    
     setupVirtualJoysticks(this);
 
     this.scale.on('resize', (gameSize) => {
@@ -114,7 +111,6 @@ function update() {
             player.hp = Math.min(100, player.hp + 0.5);
             socket.emit('updateHP', { id: socket.id, hp: player.hp });
         }
-
         player.body.setVelocity(0);
         if (!isStunned && !isActionLocked) {
             let speed = { shelly: 220, spike: 220, edgar: 270, frank: 160 }[player.charType] || 220;
@@ -141,23 +137,19 @@ function update() {
 }
 
 function setupVirtualJoysticks(scene) {
-    // 半径を半分（60 -> 30, 30 -> 15）に修正
     moveJoy = scene.add.circle(0, 0, 30, 0x000000, 0.3).setDepth(150).setScrollFactor(0);
     moveThumb = scene.add.circle(0, 0, 15, 0xcccccc, 0.5).setDepth(151).setScrollFactor(0);
     shootJoy = scene.add.circle(0, 0, 30, 0x000000, 0.3).setDepth(150).setScrollFactor(0);
     shootThumb = scene.add.circle(0, 0, 15, 0xff0000, 0.5).setDepth(151).setScrollFactor(0);
     ultBtn = scene.add.circle(0, 0, 40, 0x333333, 0.8).setDepth(150).setScrollFactor(0).setInteractive();
     ultGageGraphics = scene.add.graphics().setDepth(151).setScrollFactor(0);
-    
     updateJoystickPositions(scene.scale.width, scene.scale.height);
-
     scene.input.addPointer(2);
     scene.input.on('pointerdown', p => { 
         touchStartTime = Date.now();
         if(Phaser.Math.Distance.Between(p.x, p.y, ultBtn.x, ultBtn.y) < 50 && ultGage >= 100) { isUltAiming = true; shootData.dist = 0; } 
         else if(p.x > scene.scale.width/2) { isAiming = true; shootData.dist = 0; }
     });
-
     scene.input.on('pointermove', p => {
         if (!p.isDown) return;
         if (p.x < scene.scale.width/2) {
@@ -170,14 +162,12 @@ function setupVirtualJoysticks(scene) {
             shootData = { angle: a, dist: d, power: d/30 };
         }
     });
-
     scene.input.on('pointerup', p => {
         if (p.x < scene.scale.width/2) { moveThumb.setPosition(moveJoy.x, moveJoy.y); isMoving = false; }
         else {
             let duration = Date.now() - touchStartTime;
             let finalAngle = shootData.angle; let finalPower = shootData.power;
             if (duration < 500 && shootData.dist < 15) { finalAngle = getAutoAimAngle(player.charType, isUltAiming); finalPower = 1.0; }
-            
             if (isUltAiming && ultGage >= 100) {
                 player.lastRegenTime = Date.now();
                 socket.emit('ult', { id: socket.id, x: player.x, y: player.y, angle: finalAngle, charType: player.charType, power: finalPower });
