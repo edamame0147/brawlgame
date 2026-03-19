@@ -37,10 +37,7 @@ function preload() {}
 
 function create() {
     socket = io();
-    
-    // カメラのズーム（キャラを大きく見せる。UIには影響させない）
     this.cameras.main.setZoom(1.5);
-
     this.physics.world.setBounds(0, 0, MAP_SIZE, MAP_SIZE);
     this.cameras.main.setBounds(0, 0, MAP_SIZE, MAP_SIZE);
     this.add.grid(MAP_SIZE/2, MAP_SIZE/2, MAP_SIZE, MAP_SIZE, TILE_SIZE, TILE_SIZE, 0x34495e).setOutlineStyle(0x2c3e50);
@@ -68,9 +65,7 @@ function create() {
         }
     }
 
-    // UI用のコンテナやテキスト（ズームの影響を受けないようにScrollFactor(0)に設定）
     respawnText = this.add.text(window.innerWidth/2, window.innerHeight/2, '', { fontSize: '64px', fill: '#fff', fontStyle: 'bold' }).setOrigin(0.5).setDepth(200).setScrollFactor(0);
-    
     setupVirtualJoysticks(this);
 
     this.scale.on('resize', (gameSize) => {
@@ -111,13 +106,11 @@ function create() {
 function update() {
     aimGuide.clear();
     if (player && player.active && player.visible) {
-        // --- 自動回復（3秒間攻撃・被弾なしで毎秒10回復） ---
         const now = Date.now();
         if (now - player.lastRegenTime > 3000 && player.hp < 100) {
-            player.hp = Math.min(100, player.hp + 0.5); // 1フレームごとに加算
+            player.hp = Math.min(100, player.hp + 0.5);
             socket.emit('updateHP', { id: socket.id, hp: player.hp });
         }
-
         player.body.setVelocity(0);
         if (!isStunned && !isActionLocked) {
             let speed = { shelly: 220, spike: 220, edgar: 270, frank: 160 }[player.charType] || 220;
@@ -144,11 +137,12 @@ function update() {
 }
 
 function setupVirtualJoysticks(scene) {
-    // ズームに影響されないように個別にScrollFactorを設定
-    moveJoy = scene.add.circle(0, 0, 60, 0x000000, 0.3).setDepth(150).setScrollFactor(0);
-    moveThumb = scene.add.circle(0, 0, 30, 0xcccccc, 0.5).setDepth(151).setScrollFactor(0);
-    shootJoy = scene.add.circle(0, 0, 60, 0x000000, 0.3).setDepth(150).setScrollFactor(0);
-    shootThumb = scene.add.circle(0, 0, 30, 0xff0000, 0.5).setDepth(151).setScrollFactor(0);
+    // サイズを半分（60->30, 30->15）に変更
+    moveJoy = scene.add.circle(0, 0, 30, 0x000000, 0.3).setDepth(150).setScrollFactor(0);
+    moveThumb = scene.add.circle(0, 0, 15, 0xcccccc, 0.5).setDepth(151).setScrollFactor(0);
+    shootJoy = scene.add.circle(0, 0, 30, 0x000000, 0.3).setDepth(150).setScrollFactor(0);
+    shootThumb = scene.add.circle(0, 0, 15, 0xff0000, 0.5).setDepth(151).setScrollFactor(0);
+    // ウルトボタンも40のまま維持（元から小さい方なので）
     ultBtn = scene.add.circle(0, 0, 40, 0x333333, 0.8).setDepth(150).setScrollFactor(0).setInteractive();
     ultGageGraphics = scene.add.graphics().setDepth(151).setScrollFactor(0);
     
@@ -156,39 +150,40 @@ function setupVirtualJoysticks(scene) {
 
     scene.input.addPointer(2);
     scene.input.on('pointerdown', p => { 
-        // pointerの座標はzoomの影響を受けないので、画面上の位置で判定
         touchStartTime = Date.now();
         if(Phaser.Math.Distance.Between(p.x, p.y, ultBtn.x, ultBtn.y) < 50 && ultGage >= 100) { isUltAiming = true; shootData.dist = 0; } 
-        else if(p.x > scene.scale.width/2) { isAiming = true; shootData.dist = 0; }
+        else if(p.x < scene.scale.width/2) { isAiming = true; shootData.dist = 0; } // 右側(shootJoyがある方)判定
     });
 
     scene.input.on('pointermove', p => {
         if (!p.isDown) return;
-        if (p.x < scene.scale.width/2) {
-            let a = Phaser.Math.Angle.Between(moveJoy.x, moveJoy.y, p.x, p.y), d = Math.min(Phaser.Math.Distance.Between(moveJoy.x, moveJoy.y, p.x, p.y), 60);
+        // 左側のジョイスティック（現在は右上配置だが入力はx > width/2で判定）
+        if (p.x > scene.scale.width/2) {
+            let a = Phaser.Math.Angle.Between(moveJoy.x, moveJoy.y, p.x, p.y), d = Math.min(Phaser.Math.Distance.Between(moveJoy.x, moveJoy.y, p.x, p.y), 30);
             moveThumb.setPosition(moveJoy.x + Math.cos(a)*d, moveJoy.y + Math.sin(a)*d);
-            moveData = { x: Math.cos(a)*(d/60), y: Math.sin(a)*(d/60) }; isMoving = true;
+            moveData = { x: Math.cos(a)*(d/30), y: Math.sin(a)*(d/30) }; isMoving = true;
         } else {
-            let a = Phaser.Math.Angle.Between(shootJoy.x, shootJoy.y, p.x, p.y), d = Math.min(Phaser.Math.Distance.Between(shootJoy.x, shootJoy.y, p.x, p.y), 60);
+            // 右側のジョイスティック（現在は左上配置だが入力はx < width/2で判定）
+            let a = Phaser.Math.Angle.Between(shootJoy.x, shootJoy.y, p.x, p.y), d = Math.min(Phaser.Math.Distance.Between(shootJoy.x, shootJoy.y, p.x, p.y), 30);
             shootThumb.setPosition(shootJoy.x + Math.cos(a)*d, shootJoy.y + Math.sin(a)*d);
-            shootData = { angle: a, dist: d, power: d/60 };
+            shootData = { angle: a, dist: d, power: d/30 };
         }
     });
 
     scene.input.on('pointerup', p => {
-        if (p.x < scene.scale.width/2) { moveThumb.setPosition(moveJoy.x, moveJoy.y); isMoving = false; }
+        if (p.x > scene.scale.width/2) { moveThumb.setPosition(moveJoy.x, moveJoy.y); isMoving = false; }
         else {
             let duration = Date.now() - touchStartTime;
             let finalAngle = shootData.angle; let finalPower = shootData.power;
-            if (duration < 500 && shootData.dist < 30) { finalAngle = getAutoAimAngle(player.charType, isUltAiming); finalPower = 1.0; }
+            if (duration < 500 && shootData.dist < 15) { finalAngle = getAutoAimAngle(player.charType, isUltAiming); finalPower = 1.0; }
             
             if (isUltAiming && ultGage >= 100) {
-                player.lastRegenTime = Date.now(); // アクションで回復リセット
+                player.lastRegenTime = Date.now();
                 socket.emit('ult', { id: socket.id, x: player.x, y: player.y, angle: finalAngle, charType: player.charType, power: finalPower });
                 createBullet(scene, player.x, player.y, finalAngle, player.charType, true, socket.id, true, finalPower);
                 ultGage = 0;
             } else if (isAiming && ammo > 0) {
-                player.lastRegenTime = Date.now(); // アクションで回復リセット
+                player.lastRegenTime = Date.now();
                 if(player.charType === 'frank') { isActionLocked = true; scene.time.delayedCall(400, () => isActionLocked = false); }
                 socket.emit('shoot', { id: socket.id, x: player.x, y: player.y, angle: finalAngle, charType: player.charType });
                 createBullet(scene, player.x, player.y, finalAngle, player.charType, true, socket.id, false);
@@ -201,12 +196,14 @@ function setupVirtualJoysticks(scene) {
 
 function updateJoystickPositions(w, h) {
     if(!moveJoy) return;
-    // 画面サイズ基準で配置（ズームに関係なく端に置く）
-    moveJoy.setPosition(100, h - 100);
-    moveThumb.setPosition(100, h - 100);
-    shootJoy.setPosition(w - 100, h - 100);
-    shootThumb.setPosition(w - 100, h - 100);
-    ultBtn.setPosition(w - 200, h - 80);
+    // 移動を右上へ
+    moveJoy.setPosition(w - 100, 100);
+    moveThumb.setPosition(w - 100, 100);
+    // 攻撃を左上へ
+    shootJoy.setPosition(100, 100);
+    shootThumb.setPosition(100, 100);
+    // ウルトを上部中央へ
+    ultBtn.setPosition(w / 2, 80);
 }
 
 function updateUI(t) {
@@ -240,7 +237,7 @@ function addPlayer(s, info) {
     s.physics.add.collider(player, walls);
     s.physics.add.overlap(player, enemyBullets, (p, b) => {
         if(p.visible && p.hp > 0 && b.active) {
-            p.lastRegenTime = Date.now(); // 被弾で回復リセット
+            p.lastRegenTime = Date.now();
             let d = b.isUlt ? { shelly: 35, spike: 15, edgar: 15, frank: 40 }[b.charType] : { shelly: 25, spike: 20, edgar: 15, frank: 35 }[b.charType];
             b.destroy(); 
             socket.emit('updateHP', { id: socket.id, hp: Math.max(0, p.hp - d), attackerId: b.shooterId, stun: b.isFrankUlt });
@@ -248,7 +245,6 @@ function addPlayer(s, info) {
     });
 }
 
-// --- 以下、補助関数（drawAimGuide, addOtherPlayers, createBullet等）は前回のロジックを維持 ---
 function drawAimGuide(charType, angle, isUlt, power) {
     aimGuide.lineStyle(2, 0xffffff, 0.4); aimGuide.fillStyle(0xffffff, 0.15);
     let maxRange = isUlt ? 280 : { shelly: 200, spike: 200, edgar: 80, frank: 180 }[charType];
