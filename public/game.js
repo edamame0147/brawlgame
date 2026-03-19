@@ -1,14 +1,50 @@
-// --- 修正箇所：視点を広くするためにズーム値を変更 ---
-const VIEW_ZOOM = 1.0; // 1.5から1.0に下げて表示範囲を拡大
+// --- ステージ表示を修正した最新版 ---
+const MAP_SIZE = 1200;
+const TILE_SIZE = 60;
+const MAP_DESIGN = [
+    [1,1,1,0,0,0,0,1,0,0,0,0,1,1,1], [1,0,0,0,2,2,0,1,0,2,2,0,0,0,1],
+    [1,0,1,0,2,2,0,0,0,2,2,0,1,0,1], [0,0,1,0,0,0,1,1,1,0,0,0,1,0,0],
+    [0,2,2,0,0,0,0,0,0,0,0,0,2,2,0], [0,2,2,0,1,1,0,1,0,1,1,0,2,2,0],
+    [0,0,0,0,1,0,0,0,0,0,1,0,0,0,0], [1,1,0,0,0,0,2,2,2,0,0,0,0,1,1],
+    [0,0,0,0,1,0,0,0,0,0,1,0,0,0,0], [0,2,2,0,1,1,0,1,0,1,1,0,2,2,0],
+    [0,2,2,0,0,0,0,0,0,0,0,0,2,2,0], [0,0,1,0,0,0,1,1,1,0,0,0,1,0,0],
+    [1,0,1,0,2,2,0,0,0,2,2,0,1,0,1], [1,0,0,0,2,2,0,1,0,2,2,0,0,0,1],
+    [1,1,1,0,0,0,0,1,0,0,0,0,1,1,1],
+];
+
+const config = {
+    type: Phaser.AUTO,
+    parent: 'phaser-game',
+    scale: {
+        mode: Phaser.Scale.RESIZE,
+        autoCenter: Phaser.Scale.CENTER_BOTH,
+        width: '100%',
+        height: '100%'
+    },
+    backgroundColor: '#34495e',
+    physics: { default: 'arcade', arcade: { gravity: { y: 0 } } },
+    scene: { preload, create, update }
+};
+
+const game = new Phaser.Game(config);
+let socket, player, bullets, enemyBullets, walls, bushes, aimGuide;
+let otherPlayers = {};
+let ammo = 3, isReloading = false, ultGage = 0, isStunned = false, isActionLocked = false, respawnText;
+let moveJoy, shootJoy, moveThumb, shootThumb, ultBtn, ultGageGraphics;
+let isMoving = false, isAiming = false, isUltAiming = false, moveData = { x: 0, y: 0 }, shootData = { angle: 0, dist: 0, power: 0 };
+let lastMoveAngle = 0, touchStartTime = 0;
+
+function preload() {}
 
 function create() {
     socket = io();
     
-    // 視界を広く設定
-    this.cameras.main.setZoom(VIEW_ZOOM);
-
+    // 視点を広く（ズーム1.0）
+    this.cameras.main.setZoom(1.0);
     this.physics.world.setBounds(0, 0, MAP_SIZE, MAP_SIZE);
     this.cameras.main.setBounds(0, 0, MAP_SIZE, MAP_SIZE);
+
+    // 背景のグリッドをマップ全体に描画
     this.add.grid(MAP_SIZE/2, MAP_SIZE/2, MAP_SIZE, MAP_SIZE, TILE_SIZE, TILE_SIZE, 0x34495e).setOutlineStyle(0x2c3e50);
 
     bullets = this.physics.add.group();
@@ -17,11 +53,16 @@ function create() {
     bushes = this.physics.add.staticGroup();
     aimGuide = this.add.graphics().setDepth(5);
 
-    const offsetX = (MAP_SIZE - (MAP_DESIGN[0].length * TILE_SIZE)) / 2;
-    const offsetY = (MAP_SIZE - (MAP_DESIGN.length * TILE_SIZE)) / 2;
+    // --- 修正：マップの配置計算を確実に中央へ ---
+    const mapW = MAP_DESIGN[0].length * TILE_SIZE;
+    const mapH = MAP_DESIGN.length * TILE_SIZE;
+    const offsetX = (MAP_SIZE - mapW) / 2;
+    const offsetY = (MAP_SIZE - mapH) / 2;
+
     for (let r = 0; r < MAP_DESIGN.length; r++) {
         for (let c = 0; c < MAP_DESIGN[r].length; c++) {
-            let x = offsetX + c * TILE_SIZE + TILE_SIZE/2, y = offsetY + r * TILE_SIZE + TILE_SIZE/2;
+            let x = offsetX + c * TILE_SIZE + TILE_SIZE/2;
+            let y = offsetY + r * TILE_SIZE + TILE_SIZE/2;
             if (MAP_DESIGN[r][c] === 1) {
                 walls.create(x, y, null).setSize(TILE_SIZE-4, TILE_SIZE-4).setVisible(false);
                 this.add.rectangle(x, y, TILE_SIZE-4, TILE_SIZE-4, 0x95a5a6);
@@ -35,6 +76,7 @@ function create() {
     }
 
     respawnText = this.add.text(window.innerWidth/2, window.innerHeight/2, '', { fontSize: '64px', fill: '#fff', fontStyle: 'bold' }).setOrigin(0.5).setDepth(200).setScrollFactor(0);
+    
     setupVirtualJoysticks(this);
 
     this.scale.on('resize', (gameSize) => {
@@ -43,7 +85,7 @@ function create() {
         updateJoystickPositions(width, height);
     });
 
-    // --- ソケット通信関連（変更なし） ---
+    // 通信処理（変更なし）
     socket.on('currentPlayers', ps => {
         Object.keys(ps).forEach(id => {
             if (id === socket.id && !player) {
@@ -106,13 +148,12 @@ function update() {
 }
 
 function setupVirtualJoysticks(scene) {
-    // スティックサイズを30（元の半分）に固定
     moveJoy = scene.add.circle(0, 0, 30, 0x000000, 0.3).setDepth(150).setScrollFactor(0);
     moveThumb = scene.add.circle(0, 0, 15, 0xcccccc, 0.5).setDepth(151).setScrollFactor(0);
     shootJoy = scene.add.circle(0, 0, 30, 0x000000, 0.3).setDepth(150).setScrollFactor(0);
     shootThumb = scene.add.circle(0, 0, 15, 0xff0000, 0.5).setDepth(151).setScrollFactor(0);
     
-    // --- 修正箇所：ウルトボタンを20に縮小 ---
+    // ウルトボタン縮小 (半径20)
     ultBtn = scene.add.circle(0, 0, 20, 0x333333, 0.8).setDepth(150).setScrollFactor(0).setInteractive();
     ultGageGraphics = scene.add.graphics().setDepth(151).setScrollFactor(0);
     
@@ -121,7 +162,6 @@ function setupVirtualJoysticks(scene) {
     scene.input.addPointer(2);
     scene.input.on('pointerdown', p => { 
         touchStartTime = Date.now();
-        // 判定範囲もボタンサイズに合わせて縮小
         if(Phaser.Math.Distance.Between(p.x, p.y, ultBtn.x, ultBtn.y) < 30 && ultGage >= 100) { isUltAiming = true; shootData.dist = 0; } 
         else if(p.x < scene.scale.width/2) { isMoving = true; } 
         else { isAiming = true; shootData.dist = 0; } 
@@ -165,12 +205,11 @@ function setupVirtualJoysticks(scene) {
 
 function updateJoystickPositions(w, h) {
     if(!moveJoy) return;
-    // --- 修正箇所：少し上に上げ、中央に寄せる（下端から150px、横端から150pxの位置） ---
+    // 下端から150px、横端から150px（少し内側かつ上）
     moveJoy.setPosition(150, h - 150);
     moveThumb.setPosition(150, h - 150);
     shootJoy.setPosition(w - 150, h - 150);
     shootThumb.setPosition(w - 150, h - 150);
-    // ウルトボタンも攻撃ボタンの斜め左上へ配置
     ultBtn.setPosition(w - 220, h - 200);
 }
 
@@ -184,7 +223,7 @@ function updateUI(t) {
     if (t === player) {
         for (let i=0; i<3; i++) { t.ui.fillStyle(i < ammo ? 0xf1c40f : 0x555555); t.ui.fillRect(t.x-20+(i*14), t.y-25, 12, 4); }
         ultGageGraphics.clear(); 
-        ultGageGraphics.fillStyle(0x222222, 0.8); ultGageGraphics.fillCircle(ultBtn.x, ultBtn.y, 20); // サイズ20
+        ultGageGraphics.fillStyle(0x222222, 0.8); ultGageGraphics.fillCircle(ultBtn.x, ultBtn.y, 20);
         if (ultGage > 0) {
             ultGageGraphics.fillStyle(ultGage >= 100 ? 0xf1c40f : 0xe67e22, 1);
             let h = 40 * (ultGage / 100); 
@@ -194,7 +233,7 @@ function updateUI(t) {
     }
 }
 
-// --- 残りの関数（addPlayer, drawAimGuide等）は変更なし ---
+// 共通関数
 function addPlayer(s, info) {
     let colors = { shelly: 0x3498db, spike: 0x2ecc71, edgar: 0x9b59b6, frank: 0x795548 };
     player = s.add.circle(info.x, info.y, 20, colors[info.charType]);
