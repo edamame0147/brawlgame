@@ -234,18 +234,27 @@ function displayPin(scene, target, emoji) {
     scene.time.delayedCall(2000, () => { if(txt && txt.active) txt.destroy(); });
 }
 
-// --- 修正箇所：スパイクの分裂とウルト当たり判定の改善 ---
 function createBullet(s, x, y, angle, charType, isMine, shooterId, isUlt, power = 1.0) {
     let group = isMine ? bullets : enemyBullets;
     let bConfig = (sx, sy, ang, spd, life, size, col, isRect) => {
         let b = isRect ? s.add.rectangle(sx, sy, size, size, col) : s.add.circle(sx, sy, size, col);
         group.add(b); s.physics.add.existing(b);
         s.physics.velocityFromRotation(ang, spd, b.body.velocity);
-        s.physics.add.collider(b, walls, () => b.destroy());
-        s.time.delayedCall(life, () => { if(b && b.active) b.destroy(); });
+        s.physics.add.collider(b, walls, () => { if(b.charType==='spike'&&!b.isUlt) { splitSpike(s, b.x, b.y, shooterId, isMine); } b.destroy(); });
+        s.time.delayedCall(life, () => { if(b && b.active) { if(b.charType==='spike'&&!b.isUlt) splitSpike(s, b.x, b.y, shooterId, isMine); b.destroy(); } });
         b.charType = charType; b.shooterId = shooterId; b.isUlt = isUlt;
         return b;
     };
+
+    function splitSpike(scene, sx, sy, sid, mine) {
+        for(let i=0; i<6; i++) {
+            let sb = isMine ? s.add.circle(sx, sy, 5, 0x2ecc71) : s.add.circle(sx, sy, 5, 0x2ecc71);
+            group.add(sb); s.physics.add.existing(sb);
+            s.physics.velocityFromRotation((Math.PI*2/6)*i, 200, sb.body.velocity);
+            sb.charType = 'spike'; sb.shooterId = sid; sb.isUlt = false;
+            s.time.delayedCall(300, () => { if(sb.active) sb.destroy(); });
+        }
+    }
 
     if (isUlt) {
         let range = 280 * power;
@@ -255,6 +264,7 @@ function createBullet(s, x, y, angle, charType, isMine, shooterId, isUlt, power 
             let ultArea = s.add.circle(tx, ty, 90, 0x2ecc71, 0.4);
             group.add(ultArea); s.physics.add.existing(ultArea);
             ultArea.body.setImmovable(true);
+            ultArea.isUlt = true; ultArea.charType = 'spike'; ultArea.shooterId = shooterId;
             s.time.delayedCall(3500, () => { if(ultArea.active) ultArea.destroy(); });
         }
         else if (charType === 'edgar') {
@@ -265,19 +275,7 @@ function createBullet(s, x, y, angle, charType, isMine, shooterId, isUlt, power 
         }
     } else {
         if (charType === 'shelly') { for(let i=-1; i<=1; i++) bConfig(x, y, angle+i*0.2, 450, 450, 5, 0xf1c40f, false); }
-        else if (charType === 'spike') {
-            let mainBall = bConfig(x, y, angle, 280, 700, 10, 0x2ecc71, false);
-            // 分裂を確実にするためタイマーで生成
-            s.time.delayedCall(700, () => {
-                if(mainBall && mainBall.active) {
-                    let bx = mainBall.x, by = mainBall.y;
-                    mainBall.destroy();
-                    for(let i=0; i<6; i++) {
-                        bConfig(bx, by, (Math.PI*2/6)*i, 200, 300, 5, 0x2ecc71, false);
-                    }
-                }
-            });
-        }
+        else if (charType === 'spike') { bConfig(x, y, angle, 280, 700, 10, 0x2ecc71, false); }
         else if (charType === 'edgar') { bConfig(x + Math.cos(angle)*35, y + Math.sin(angle)*35, angle, 0, 120, 45, 0xffffff, true); }
         else if (charType === 'frank') { for(let i=-1; i<=1; i++) bConfig(x, y, angle + i * 0.15, 400, 350, 20, 0x795548, false); }
     }
@@ -293,14 +291,13 @@ function addPlayer(s, info) {
     player.body.setCollideWorldBounds(true);
     s.physics.add.collider(player, walls);
     
-    // 当たり判定：即死防止のため、ウルトは継続ダメージまたは一度のみの判定にする
     s.physics.add.overlap(player, enemyBullets, (p, b) => {
         if(p.visible && p.hp > 0 && b.active) {
             p.lastRegenTime = Date.now();
             let d = b.isUlt ? { shelly: 35, spike: 5, edgar: 15, frank: 30 }[b.charType] : { shelly: 25, spike: 20, edgar: 15, frank: 20 }[b.charType];
             
-            // スパイクのウルトのみ例外処理（継続ダメージ化）
             if (b.charType === 'spike' && b.isUlt) {
+                // スパイクのウルト：0.5秒に1回ダメージを与える（即死回避）
                 if (!p.lastUltHit || Date.now() - p.lastUltHit > 500) {
                     p.lastUltHit = Date.now();
                     socket.emit('updateHP', { id: socket.id, hp: Math.max(0, p.hp - d), attackerId: b.shooterId });
