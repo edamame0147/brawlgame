@@ -137,13 +137,13 @@ function update() {
 }
 
 function setupVirtualJoysticks(scene) {
-    // サイズを半分（60->30, 30->15）に変更
+    // サイズを半分に修正 (半径30)
     moveJoy = scene.add.circle(0, 0, 30, 0x000000, 0.3).setDepth(150).setScrollFactor(0);
     moveThumb = scene.add.circle(0, 0, 15, 0xcccccc, 0.5).setDepth(151).setScrollFactor(0);
     shootJoy = scene.add.circle(0, 0, 30, 0x000000, 0.3).setDepth(150).setScrollFactor(0);
     shootThumb = scene.add.circle(0, 0, 15, 0xff0000, 0.5).setDepth(151).setScrollFactor(0);
-    // ウルトボタンも40のまま維持（元から小さい方なので）
-    ultBtn = scene.add.circle(0, 0, 40, 0x333333, 0.8).setDepth(150).setScrollFactor(0).setInteractive();
+    // ウルトボタンも少し小さく調整 (半径30)
+    ultBtn = scene.add.circle(0, 0, 30, 0x333333, 0.8).setDepth(150).setScrollFactor(0).setInteractive();
     ultGageGraphics = scene.add.graphics().setDepth(151).setScrollFactor(0);
     
     updateJoystickPositions(scene.scale.width, scene.scale.height);
@@ -151,19 +151,18 @@ function setupVirtualJoysticks(scene) {
     scene.input.addPointer(2);
     scene.input.on('pointerdown', p => { 
         touchStartTime = Date.now();
-        if(Phaser.Math.Distance.Between(p.x, p.y, ultBtn.x, ultBtn.y) < 50 && ultGage >= 100) { isUltAiming = true; shootData.dist = 0; } 
-        else if(p.x < scene.scale.width/2) { isAiming = true; shootData.dist = 0; } // 右側(shootJoyがある方)判定
+        if(Phaser.Math.Distance.Between(p.x, p.y, ultBtn.x, ultBtn.y) < 40 && ultGage >= 100) { isUltAiming = true; shootData.dist = 0; } 
+        else if(p.x < scene.scale.width/2) { isMoving = true; } // 左側は移動
+        else { isAiming = true; shootData.dist = 0; } // 右側は攻撃
     });
 
     scene.input.on('pointermove', p => {
         if (!p.isDown) return;
-        // 左側のジョイスティック（現在は右上配置だが入力はx > width/2で判定）
-        if (p.x > scene.scale.width/2) {
+        if (p.x < scene.scale.width/2) {
             let a = Phaser.Math.Angle.Between(moveJoy.x, moveJoy.y, p.x, p.y), d = Math.min(Phaser.Math.Distance.Between(moveJoy.x, moveJoy.y, p.x, p.y), 30);
             moveThumb.setPosition(moveJoy.x + Math.cos(a)*d, moveJoy.y + Math.sin(a)*d);
-            moveData = { x: Math.cos(a)*(d/30), y: Math.sin(a)*(d/30) }; isMoving = true;
+            moveData = { x: Math.cos(a)*(d/30), y: Math.sin(a)*(d/30) };
         } else {
-            // 右側のジョイスティック（現在は左上配置だが入力はx < width/2で判定）
             let a = Phaser.Math.Angle.Between(shootJoy.x, shootJoy.y, p.x, p.y), d = Math.min(Phaser.Math.Distance.Between(shootJoy.x, shootJoy.y, p.x, p.y), 30);
             shootThumb.setPosition(shootJoy.x + Math.cos(a)*d, shootJoy.y + Math.sin(a)*d);
             shootData = { angle: a, dist: d, power: d/30 };
@@ -171,12 +170,11 @@ function setupVirtualJoysticks(scene) {
     });
 
     scene.input.on('pointerup', p => {
-        if (p.x > scene.scale.width/2) { moveThumb.setPosition(moveJoy.x, moveJoy.y); isMoving = false; }
+        if (p.x < scene.scale.width/2) { moveThumb.setPosition(moveJoy.x, moveJoy.y); isMoving = false; }
         else {
             let duration = Date.now() - touchStartTime;
             let finalAngle = shootData.angle; let finalPower = shootData.power;
             if (duration < 500 && shootData.dist < 15) { finalAngle = getAutoAimAngle(player.charType, isUltAiming); finalPower = 1.0; }
-            
             if (isUltAiming && ultGage >= 100) {
                 player.lastRegenTime = Date.now();
                 socket.emit('ult', { id: socket.id, x: player.x, y: player.y, angle: finalAngle, charType: player.charType, power: finalPower });
@@ -196,14 +194,13 @@ function setupVirtualJoysticks(scene) {
 
 function updateJoystickPositions(w, h) {
     if(!moveJoy) return;
-    // 移動を右上へ
-    moveJoy.setPosition(w - 100, 100);
-    moveThumb.setPosition(w - 100, 100);
-    // 攻撃を左上へ
-    shootJoy.setPosition(100, 100);
-    shootThumb.setPosition(100, 100);
-    // ウルトを上部中央へ
-    ultBtn.setPosition(w / 2, 80);
+    // 元の位置から少し上、少し中央寄りに配置
+    moveJoy.setPosition(150, h - 150);
+    moveThumb.setPosition(150, h - 150);
+    shootJoy.setPosition(w - 150, h - 150);
+    shootThumb.setPosition(w - 150, h - 150);
+    // ウルトボタンも攻撃ボタンの少し左上あたりに
+    ultBtn.setPosition(w - 230, h - 210);
 }
 
 function updateUI(t) {
@@ -216,13 +213,13 @@ function updateUI(t) {
     if (t === player) {
         for (let i=0; i<3; i++) { t.ui.fillStyle(i < ammo ? 0xf1c40f : 0x555555); t.ui.fillRect(t.x-20+(i*14), t.y-25, 12, 4); }
         ultGageGraphics.clear(); 
-        ultGageGraphics.fillStyle(0x222222, 0.8); ultGageGraphics.fillCircle(ultBtn.x, ultBtn.y, 40);
+        ultGageGraphics.fillStyle(0x222222, 0.8); ultGageGraphics.fillCircle(ultBtn.x, ultBtn.y, 30);
         if (ultGage > 0) {
             ultGageGraphics.fillStyle(ultGage >= 100 ? 0xf1c40f : 0xe67e22, 1);
-            let h = 80 * (ultGage / 100); 
-            ultGageGraphics.fillRect(ultBtn.x - 40, ultBtn.y + 40 - h, 80, h);
+            let h = 60 * (ultGage / 100); 
+            ultGageGraphics.fillRect(ultBtn.x - 30, ultBtn.y + 30 - h, 60, h);
         }
-        ultGageGraphics.lineStyle(4, ultGage >= 100 ? 0xffffff : 0x333333); ultGageGraphics.strokeCircle(ultBtn.x, ultBtn.y, 40);
+        ultGageGraphics.lineStyle(4, ultGage >= 100 ? 0xffffff : 0x333333); ultGageGraphics.strokeCircle(ultBtn.x, ultBtn.y, 30);
     }
 }
 
