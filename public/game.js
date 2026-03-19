@@ -37,12 +37,9 @@ function preload() {}
 
 function create() {
     socket = io();
-    
-    // 視点を広く (Zoom 1.0)
     this.cameras.main.setZoom(1.0);
     this.physics.world.setBounds(0, 0, MAP_SIZE, MAP_SIZE);
     this.cameras.main.setBounds(0, 0, MAP_SIZE, MAP_SIZE);
-
     this.add.grid(MAP_SIZE/2, MAP_SIZE/2, MAP_SIZE, MAP_SIZE, TILE_SIZE, TILE_SIZE, 0x34495e).setOutlineStyle(0x2c3e50);
 
     bullets = this.physics.add.group();
@@ -73,7 +70,6 @@ function create() {
     }
 
     respawnText = this.add.text(window.innerWidth/2, window.innerHeight/2, '', { fontSize: '64px', fill: '#fff', fontStyle: 'bold' }).setOrigin(0.5).setDepth(200).setScrollFactor(0);
-    
     setupVirtualJoysticks(this);
 
     this.scale.on('resize', (gameSize) => {
@@ -132,7 +128,6 @@ function update() {
         player.isInBush = !!bId; player.bushId = bId;
         player.setAlpha(player.isInBush ? 0.6 : 1);
         socket.emit('playerMovement', { x: player.x, y: player.y, isInBush: player.isInBush, bushId: bId });
-        
         if (player.pinGroup && player.pinGroup.active) player.pinGroup.setPosition(player.x, player.y - 100);
         updateUI(player);
     }
@@ -155,7 +150,6 @@ function setupVirtualJoysticks(scene) {
     shootThumb = scene.add.circle(0, 0, THUMB_SIZE, 0xff0000, 0.5).setDepth(151).setScrollFactor(0);
     ultBtn = scene.add.circle(0, 0, 30, 0x333333, 0.8).setDepth(150).setScrollFactor(0).setInteractive();
     ultGageGraphics = scene.add.graphics().setDepth(151).setScrollFactor(0);
-    
     updateJoystickPositions(scene.scale.width, scene.scale.height);
 
     scene.input.addPointer(2);
@@ -240,6 +234,7 @@ function displayPin(scene, target, emoji) {
     scene.time.delayedCall(2000, () => { if(txt && txt.active) txt.destroy(); });
 }
 
+// --- 修正箇所：スパイクの分裂とウルト当たり判定の改善 ---
 function createBullet(s, x, y, angle, charType, isMine, shooterId, isUlt, power = 1.0) {
     let group = isMine ? bullets : enemyBullets;
     let bConfig = (sx, sy, ang, spd, life, size, col, isRect) => {
@@ -247,7 +242,7 @@ function createBullet(s, x, y, angle, charType, isMine, shooterId, isUlt, power 
         group.add(b); s.physics.add.existing(b);
         s.physics.velocityFromRotation(ang, spd, b.body.velocity);
         s.physics.add.collider(b, walls, () => b.destroy());
-        s.time.delayedCall(life, () => { if(b.active) b.destroy(); });
+        s.time.delayedCall(life, () => { if(b && b.active) b.destroy(); });
         b.charType = charType; b.shooterId = shooterId; b.isUlt = isUlt;
         return b;
     };
@@ -259,7 +254,8 @@ function createBullet(s, x, y, angle, charType, isMine, shooterId, isUlt, power 
             let tx = x + Math.cos(angle) * range, ty = y + Math.sin(angle) * range;
             let ultArea = s.add.circle(tx, ty, 90, 0x2ecc71, 0.4);
             group.add(ultArea); s.physics.add.existing(ultArea);
-            s.time.delayedCall(3500, () => ultArea.destroy());
+            ultArea.body.setImmovable(true);
+            s.time.delayedCall(3500, () => { if(ultArea.active) ultArea.destroy(); });
         }
         else if (charType === 'edgar') {
             if(isMine && player) { isActionLocked = true; s.tweens.add({ targets: player, x: x + Math.cos(angle) * range, y: y + Math.sin(angle) * range, duration: 600, ease: 'Power2', onComplete: () => isActionLocked = false }); }
@@ -271,7 +267,16 @@ function createBullet(s, x, y, angle, charType, isMine, shooterId, isUlt, power 
         if (charType === 'shelly') { for(let i=-1; i<=1; i++) bConfig(x, y, angle+i*0.2, 450, 450, 5, 0xf1c40f, false); }
         else if (charType === 'spike') {
             let mainBall = bConfig(x, y, angle, 280, 700, 10, 0x2ecc71, false);
-            s.time.delayedCall(700, () => { if(mainBall.active) { for(let i=0; i<6; i++) bConfig(mainBall.x, mainBall.y, (Math.PI*2/6)*i, 200, 300, 5, 0x2ecc71, false); }});
+            // 分裂を確実にするためタイマーで生成
+            s.time.delayedCall(700, () => {
+                if(mainBall && mainBall.active) {
+                    let bx = mainBall.x, by = mainBall.y;
+                    mainBall.destroy();
+                    for(let i=0; i<6; i++) {
+                        bConfig(bx, by, (Math.PI*2/6)*i, 200, 300, 5, 0x2ecc71, false);
+                    }
+                }
+            });
         }
         else if (charType === 'edgar') { bConfig(x + Math.cos(angle)*35, y + Math.sin(angle)*35, angle, 0, 120, 45, 0xffffff, true); }
         else if (charType === 'frank') { for(let i=-1; i<=1; i++) bConfig(x, y, angle + i * 0.15, 400, 350, 20, 0x795548, false); }
@@ -287,12 +292,23 @@ function addPlayer(s, info) {
     player.nameTag = s.add.text(info.x, info.y - 55, info.userName, { fontSize: '14px', fill: '#ffffff', fontStyle: 'bold' }).setOrigin(0.5).setDepth(10);
     player.body.setCollideWorldBounds(true);
     s.physics.add.collider(player, walls);
+    
+    // 当たり判定：即死防止のため、ウルトは継続ダメージまたは一度のみの判定にする
     s.physics.add.overlap(player, enemyBullets, (p, b) => {
         if(p.visible && p.hp > 0 && b.active) {
             p.lastRegenTime = Date.now();
-            let d = b.isUlt ? { shelly: 35, spike: 15, edgar: 15, frank: 30 }[b.charType] : { shelly: 25, spike: 20, edgar: 15, frank: 20 }[b.charType];
-            b.destroy(); 
-            socket.emit('updateHP', { id: socket.id, hp: Math.max(0, p.hp - d), attackerId: b.shooterId, stun: b.isFrankUlt });
+            let d = b.isUlt ? { shelly: 35, spike: 5, edgar: 15, frank: 30 }[b.charType] : { shelly: 25, spike: 20, edgar: 15, frank: 20 }[b.charType];
+            
+            // スパイクのウルトのみ例外処理（継続ダメージ化）
+            if (b.charType === 'spike' && b.isUlt) {
+                if (!p.lastUltHit || Date.now() - p.lastUltHit > 500) {
+                    p.lastUltHit = Date.now();
+                    socket.emit('updateHP', { id: socket.id, hp: Math.max(0, p.hp - d), attackerId: b.shooterId });
+                }
+            } else {
+                b.destroy(); 
+                socket.emit('updateHP', { id: socket.id, hp: Math.max(0, p.hp - d), attackerId: b.shooterId, stun: b.isFrankUlt });
+            }
         }
     });
 }
@@ -325,7 +341,7 @@ function addOtherPlayers(s, info) {
             let gain = b.isUlt ? 0 : { shelly: 12, spike: 20, edgar: 15, frank: 25 }[player.charType];
             ultGage = Math.min(100, ultGage + gain);
             if (player.charType === 'edgar') player.hp = Math.min(100, player.hp + 3);
-            b.destroy(); 
+            if (!(b.charType === 'spike' && b.isUlt)) b.destroy(); 
         }
     });
 }
@@ -341,11 +357,9 @@ function getAutoAimAngle(charType, isUlt) {
 }
 
 function startReload(s) { if(isReloading) return; isReloading = true; s.time.delayedCall(1200, () => { ammo++; isReloading = false; if(ammo < 3) startReload(s); }); }
-
 function startRespawnSequence(s) {
     let c = 3; if(respawnText) respawnText.setText(`復活まで: ${c}`);
     let i = setInterval(() => { c--; if(c>0) { if(respawnText) respawnText.setText(`復活まで: ${c}`); } else { clearInterval(i); if(respawnText) respawnText.setText(''); socket.emit('respawnRequest'); } }, 1000);
 }
-
 window.launchGame = type => { document.getElementById('overlay').style.display = 'none'; if(socket) socket.emit('joinGame', { charType: type, userName: document.getElementById('nameInput').value || 'No Name' }); };
 window.sendPin = e => { if(socket && player && player.visible) socket.emit('sendPin', { id: socket.id, emoji: e }); };
