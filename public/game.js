@@ -1,43 +1,12 @@
-const MAP_SIZE = 1200;
-const TILE_SIZE = 60;
-const MAP_DESIGN = [
-    [1,1,1,0,0,0,0,1,0,0,0,0,1,1,1], [1,0,0,0,2,2,0,1,0,2,2,0,0,0,1],
-    [1,0,1,0,2,2,0,0,0,2,2,0,1,0,1], [0,0,1,0,0,0,1,1,1,0,0,0,1,0,0],
-    [0,2,2,0,0,0,0,0,0,0,0,0,2,2,0], [0,2,2,0,1,1,0,1,0,1,1,0,2,2,0],
-    [0,0,0,0,1,0,0,0,0,0,1,0,0,0,0], [1,1,0,0,0,0,2,2,2,0,0,0,0,1,1],
-    [0,0,0,0,1,0,0,0,0,0,1,0,0,0,0], [0,2,2,0,1,1,0,1,0,1,1,0,2,2,0],
-    [0,2,2,0,0,0,0,0,0,0,0,0,2,2,0], [0,0,1,0,0,0,1,1,1,0,0,0,1,0,0],
-    [1,0,1,0,2,2,0,0,0,2,2,0,1,0,1], [1,0,0,0,2,2,0,1,0,2,2,0,0,0,1],
-    [1,1,1,0,0,0,0,1,0,0,0,0,1,1,1],
-];
-
-const config = {
-    type: Phaser.AUTO,
-    parent: 'phaser-game',
-    scale: {
-        mode: Phaser.Scale.RESIZE,
-        autoCenter: Phaser.Scale.CENTER_BOTH,
-        width: '100%',
-        height: '100%'
-    },
-    backgroundColor: '#34495e',
-    physics: { default: 'arcade', arcade: { gravity: { y: 0 } } },
-    scene: { preload, create, update }
-};
-
-const game = new Phaser.Game(config);
-let socket, player, bullets, enemyBullets, walls, bushes, aimGuide;
-let otherPlayers = {};
-let ammo = 3, isReloading = false, ultGage = 0, isStunned = false, isActionLocked = false, respawnText;
-let moveJoy, shootJoy, moveThumb, shootThumb, ultBtn, ultGageGraphics;
-let isMoving = false, isAiming = false, isUltAiming = false, moveData = { x: 0, y: 0 }, shootData = { angle: 0, dist: 0, power: 0 };
-let lastMoveAngle = 0, touchStartTime = 0;
-
-function preload() {}
+// --- 修正箇所：視点を広くするためにズーム値を変更 ---
+const VIEW_ZOOM = 1.0; // 1.5から1.0に下げて表示範囲を拡大
 
 function create() {
     socket = io();
-    this.cameras.main.setZoom(1.5);
+    
+    // 視界を広く設定
+    this.cameras.main.setZoom(VIEW_ZOOM);
+
     this.physics.world.setBounds(0, 0, MAP_SIZE, MAP_SIZE);
     this.cameras.main.setBounds(0, 0, MAP_SIZE, MAP_SIZE);
     this.add.grid(MAP_SIZE/2, MAP_SIZE/2, MAP_SIZE, MAP_SIZE, TILE_SIZE, TILE_SIZE, 0x34495e).setOutlineStyle(0x2c3e50);
@@ -74,6 +43,7 @@ function create() {
         updateJoystickPositions(width, height);
     });
 
+    // --- ソケット通信関連（変更なし） ---
     socket.on('currentPlayers', ps => {
         Object.keys(ps).forEach(id => {
             if (id === socket.id && !player) {
@@ -82,7 +52,6 @@ function create() {
             } else if (id !== socket.id && !otherPlayers[id]) addOtherPlayers(this, ps[id]);
         });
     });
-
     socket.on('enemyShoot', d => { if(otherPlayers[d.id]) otherPlayers[d.id].lastActionTime = Date.now(); createBullet(this, d.x, d.y, d.angle, d.charType, false, d.id, false); });
     socket.on('enemyUlt', d => { if(otherPlayers[d.id]) otherPlayers[d.id].lastActionTime = Date.now(); createBullet(this, d.x, d.y, d.angle, d.charType, false, d.id, true, d.power); });
     socket.on('playerMoved', info => { if(otherPlayers[info.id]) { otherPlayers[info.id].setPosition(info.x, info.y); otherPlayers[info.id].isInBush = info.isInBush; otherPlayers[info.id].bushId = info.bushId; }});
@@ -137,13 +106,14 @@ function update() {
 }
 
 function setupVirtualJoysticks(scene) {
-    // サイズを半分に修正 (半径30)
+    // スティックサイズを30（元の半分）に固定
     moveJoy = scene.add.circle(0, 0, 30, 0x000000, 0.3).setDepth(150).setScrollFactor(0);
     moveThumb = scene.add.circle(0, 0, 15, 0xcccccc, 0.5).setDepth(151).setScrollFactor(0);
     shootJoy = scene.add.circle(0, 0, 30, 0x000000, 0.3).setDepth(150).setScrollFactor(0);
     shootThumb = scene.add.circle(0, 0, 15, 0xff0000, 0.5).setDepth(151).setScrollFactor(0);
-    // ウルトボタンも少し小さく調整 (半径30)
-    ultBtn = scene.add.circle(0, 0, 30, 0x333333, 0.8).setDepth(150).setScrollFactor(0).setInteractive();
+    
+    // --- 修正箇所：ウルトボタンを20に縮小 ---
+    ultBtn = scene.add.circle(0, 0, 20, 0x333333, 0.8).setDepth(150).setScrollFactor(0).setInteractive();
     ultGageGraphics = scene.add.graphics().setDepth(151).setScrollFactor(0);
     
     updateJoystickPositions(scene.scale.width, scene.scale.height);
@@ -151,9 +121,10 @@ function setupVirtualJoysticks(scene) {
     scene.input.addPointer(2);
     scene.input.on('pointerdown', p => { 
         touchStartTime = Date.now();
-        if(Phaser.Math.Distance.Between(p.x, p.y, ultBtn.x, ultBtn.y) < 40 && ultGage >= 100) { isUltAiming = true; shootData.dist = 0; } 
-        else if(p.x < scene.scale.width/2) { isMoving = true; } // 左側は移動
-        else { isAiming = true; shootData.dist = 0; } // 右側は攻撃
+        // 判定範囲もボタンサイズに合わせて縮小
+        if(Phaser.Math.Distance.Between(p.x, p.y, ultBtn.x, ultBtn.y) < 30 && ultGage >= 100) { isUltAiming = true; shootData.dist = 0; } 
+        else if(p.x < scene.scale.width/2) { isMoving = true; } 
+        else { isAiming = true; shootData.dist = 0; } 
     });
 
     scene.input.on('pointermove', p => {
@@ -194,13 +165,13 @@ function setupVirtualJoysticks(scene) {
 
 function updateJoystickPositions(w, h) {
     if(!moveJoy) return;
-    // 元の位置から少し上、少し中央寄りに配置
+    // --- 修正箇所：少し上に上げ、中央に寄せる（下端から150px、横端から150pxの位置） ---
     moveJoy.setPosition(150, h - 150);
     moveThumb.setPosition(150, h - 150);
     shootJoy.setPosition(w - 150, h - 150);
     shootThumb.setPosition(w - 150, h - 150);
-    // ウルトボタンも攻撃ボタンの少し左上あたりに
-    ultBtn.setPosition(w - 230, h - 210);
+    // ウルトボタンも攻撃ボタンの斜め左上へ配置
+    ultBtn.setPosition(w - 220, h - 200);
 }
 
 function updateUI(t) {
@@ -213,16 +184,17 @@ function updateUI(t) {
     if (t === player) {
         for (let i=0; i<3; i++) { t.ui.fillStyle(i < ammo ? 0xf1c40f : 0x555555); t.ui.fillRect(t.x-20+(i*14), t.y-25, 12, 4); }
         ultGageGraphics.clear(); 
-        ultGageGraphics.fillStyle(0x222222, 0.8); ultGageGraphics.fillCircle(ultBtn.x, ultBtn.y, 30);
+        ultGageGraphics.fillStyle(0x222222, 0.8); ultGageGraphics.fillCircle(ultBtn.x, ultBtn.y, 20); // サイズ20
         if (ultGage > 0) {
             ultGageGraphics.fillStyle(ultGage >= 100 ? 0xf1c40f : 0xe67e22, 1);
-            let h = 60 * (ultGage / 100); 
-            ultGageGraphics.fillRect(ultBtn.x - 30, ultBtn.y + 30 - h, 60, h);
+            let h = 40 * (ultGage / 100); 
+            ultGageGraphics.fillRect(ultBtn.x - 20, ultBtn.y + 20 - h, 40, h);
         }
-        ultGageGraphics.lineStyle(4, ultGage >= 100 ? 0xffffff : 0x333333); ultGageGraphics.strokeCircle(ultBtn.x, ultBtn.y, 30);
+        ultGageGraphics.lineStyle(4, ultGage >= 100 ? 0xffffff : 0x333333); ultGageGraphics.strokeCircle(ultBtn.x, ultBtn.y, 20);
     }
 }
 
+// --- 残りの関数（addPlayer, drawAimGuide等）は変更なし ---
 function addPlayer(s, info) {
     let colors = { shelly: 0x3498db, spike: 0x2ecc71, edgar: 0x9b59b6, frank: 0x795548 };
     player = s.add.circle(info.x, info.y, 20, colors[info.charType]);
@@ -241,7 +213,6 @@ function addPlayer(s, info) {
         }
     });
 }
-
 function drawAimGuide(charType, angle, isUlt, power) {
     aimGuide.lineStyle(2, 0xffffff, 0.4); aimGuide.fillStyle(0xffffff, 0.15);
     let maxRange = isUlt ? 280 : { shelly: 200, spike: 200, edgar: 80, frank: 180 }[charType];
@@ -258,7 +229,6 @@ function drawAimGuide(charType, angle, isUlt, power) {
         aimGuide.lineBetween(player.x, player.y, ex, ey);
     }
 }
-
 function addOtherPlayers(s, info) {
     let colors = { shelly: 0x3498db, spike: 0x2ecc71, edgar: 0x9b59b6, frank: 0x795548 };
     let op = s.add.circle(info.x, info.y, 20, colors[info.charType]);
@@ -274,7 +244,6 @@ function addOtherPlayers(s, info) {
         }
     });
 }
-
 function createBullet(s, x, y, angle, charType, isMine, shooterId, isUlt, power = 1.0) {
     let group = isMine ? bullets : enemyBullets;
     let bConfig = (sx, sy, ang, spd, life, size, col, isRect) => {
@@ -297,7 +266,6 @@ function createBullet(s, x, y, angle, charType, isMine, shooterId, isUlt, power 
         else if (charType === 'frank') { for(let i=0; i<2; i++) { let dist = 80 + i*80; let b = s.add.circle(x + Math.cos(angle)*dist, y + Math.sin(angle)*dist, 70, 0x795548, 0); group.add(b); s.physics.add.existing(b); b.shooterId = shooterId; s.time.delayedCall(350, () => b.destroy()); } }
     }
 }
-
 function getAutoAimAngle(charType, isUlt) {
     let maxRange = 300; let nearestEnemy = null, minDist = Infinity;
     Object.values(otherPlayers).forEach(op => {
@@ -307,7 +275,6 @@ function getAutoAimAngle(charType, isUlt) {
     });
     return nearestEnemy ? Phaser.Math.Angle.Between(player.x, player.y, nearestEnemy.x, nearestEnemy.y) : lastMoveAngle;
 }
-
 function startReload(s) { if(isReloading) return; isReloading = true; s.time.delayedCall(1200, () => { ammo++; isReloading = false; if(ammo < 3) startReload(s); }); }
 function startRespawnSequence(s) {
     let c = 3; if(respawnText) respawnText.setText(`復活まで: ${c}`);
@@ -320,6 +287,5 @@ function displayPin(scene, target, emoji) {
     target.pinGroup = txt;
     scene.time.delayedCall(2000, () => { if(txt) txt.destroy(); });
 }
-
 window.launchGame = type => { document.getElementById('overlay').style.display = 'none'; if(socket) socket.emit('joinGame', { charType: type, userName: document.getElementById('nameInput').value || 'No Name' }); };
 window.sendPin = e => { if(socket && player && player.visible) socket.emit('sendPin', { id: socket.id, emoji: e }); };
